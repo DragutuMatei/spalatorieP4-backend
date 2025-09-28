@@ -139,6 +139,7 @@ const sendDeletedBookingEmail = async (req, res) => {
 
     const formattedDate = startDateTime.format("DD-MMM-YYYY");
     const formattedTime = startDateTime.format("HH:mm");
+    const displayDate = startDateTime.format("DD/MM/YYYY");
 
     await transporter.sendMail({
       from: '"Spălătorie Cămin" <spalatoriep4@osfiir.ro>',
