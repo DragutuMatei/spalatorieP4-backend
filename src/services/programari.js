@@ -1,0 +1,814 @@
+// import { db } from "../utils/admin_fire.js";
+
+// const saveProgramare = async (req, res) => {
+//   const { programareData } = req.body;
+//   // console.log(programareData);
+//   try {
+//     const proRef = await db.collection("programari").add(programareData);
+//     const content = await proRef.get();
+//     const data = { ...content.data(), uid: proRef.id };
+//     console.log(data);
+//     return {
+//       code: 200,
+//       success: true,
+//       message: "Programare saved successfully",
+//       programare: data,
+//     };
+//   } catch (error) {
+//     console.log("Error saving programare:", error);
+//     return {
+//       code: 500,
+//       success: false,
+//       message: "Error saving programare",
+//       error: error.message,
+//     };
+//   }
+// };
+// const getAllProgramari = async (req, res) => {
+//   try {
+//     const programareRef = db.collection("programari");
+//     const snapshot = await programareRef.get();
+//     if (snapshot.empty) {
+//       return {
+//         code: 404,
+//         success: false,
+//         message: "No programari found",
+//       };
+//     }
+//     const programari = [];
+//     snapshot.forEach((doc) => {
+//       programari.push({ uid: doc.id, ...doc.data() });
+//     });
+//     return {
+//       code: 200,
+//       success: true,
+//       programari: programari,
+//       message: "Programari fetched successfully",
+//     };
+//   } catch (error) {
+//     console.log("Error fetching programari:", error);
+//     return {
+//       code: 500,
+//       success: false,
+//       message: "Error fetching programari",
+//       error: error.message,
+//     };
+//   }
+// };
+
+// const getProgramareByUserUid = async (req, res) => {
+//   const { uid } = req.params;
+//   try {
+//     const programariRef = db
+//       .collection("programari")
+//       .where("user.uid", "==", uid);
+//     const snapshot = await programariRef.get();
+//     if (snapshot.empty) {
+//       return {
+//         code: 404,
+//         success: false,
+//         message: "No programari found for this user",
+//       };
+//     }
+
+//     const programari = [];
+//     snapshot.forEach((doc) => {
+//       programari.push({ uid: doc.id, ...doc.data() });
+//     });
+//     return {
+//       code: 200,
+//       success: true,
+//       programari: programari,
+//       message: "Programari found for this user",
+//     };
+//   } catch (error) {
+//     console.log("Error fetching programari:", error);
+//     return {
+//       code: 500,
+//       success: false,
+//       message: "Error fetching programari",
+//       error: error.message,
+//     };
+//   }
+// };
+
+// const updateProgramare = async (req, res) => {
+//   const { programareId, updatedData } = req.body;
+//   try {
+//     const programareRef = db.collection("programari").doc(programareId);
+//     await programareRef.update(updatedData);
+//     const updatedDoc = await programareRef.get();
+//     return {
+//       code: 200,
+//       success: true,
+//       message: "Programare updated successfully",
+//       programare: updatedDoc.data(),
+//     };
+//   } catch (error) {
+//     console.log("Error updating programare:", error);
+//     return {
+//       code: 500,
+//       success: false,
+//       message: "Error updating programare",
+//       error: error.message,
+//     };
+//   }
+// };
+
+// const deleteProgramare = async (req, res) => {
+//   const { uid } = req.params;
+
+//   try {
+//     const programareRef = db.collection("programari").doc(uid);
+//     await programareRef.delete();
+//     return {
+//       code: 200,
+//       success: true,
+//       message: "Programare deleted successfully",
+//     };
+//   } catch (error) {
+//     console.log("Error deleting programare:", error);
+//     return {
+//       code: 500,
+//       success: false,
+//       message: "Error deleting programare",
+//       error: error.message,
+//     };
+//   }
+// };
+
+// export {
+//   saveProgramare,
+//   getAllProgramari,
+//   getProgramareByUserUid,
+//   updateProgramare,
+//   deleteProgramare,
+// };
+import { db } from "../utils/admin_fire.js";
+import { getIO } from "../utils/socket.js";
+import { sendBookingConfirmationEmail } from "./emailService.js";
+import dayjs from "dayjs";
+
+const saveProgramare = async (req, res) => {
+  const { programareData } = req.body;
+  
+  console.log('Received programareData:', programareData);
+  console.log('Date format received:', programareData.date);
+  
+  try {
+    // Verificăm dacă există conflict de programare
+    const conflictCheck = await checkForConflicts(
+      programareData.date,
+      programareData.start_interval_time,
+      programareData.final_interval_time,
+      programareData.machine
+    );
+
+    if (conflictCheck.hasConflict) {
+      return {
+        code: 409, // Conflict status code
+        success: false,
+        message: "Există deja o programare pentru această mașină în intervalul selectat!",
+        conflictDetails: conflictCheck.conflicts
+      };
+    }
+
+    const proRef = await db.collection("programari").add(programareData);
+    const content = await proRef.get();
+    const data = { ...content.data(), uid: proRef.id };
+    console.log(data);
+
+    // Trimitem email de confirmare
+    try {
+      // Normalizăm data pentru email
+      let normalizedDate = programareData.date;
+      if (typeof programareData.date === 'string' && programareData.date.includes('T')) {
+        // Convertim din ISO format în DD/MM/YYYY
+        normalizedDate = dayjs(programareData.date).format('DD/MM/YYYY');
+      }
+      
+      const emailData = {
+        to: programareData.user.google?.email || programareData.user.email,
+        fullName: programareData.user.numeComplet,
+        room: programareData.user.camera,
+        machine: programareData.machine,
+        date: normalizedDate,
+        startTime: programareData.start_interval_time,
+        duration: calculateDuration(programareData.start_interval_time, programareData.final_interval_time)
+      };
+      
+      console.log('Email data being sent:', emailData);
+      
+      await sendBookingConfirmationEmail(emailData);
+      console.log('Booking confirmation email sent successfully');
+    } catch (emailError) {
+      console.error('Error sending booking confirmation email:', emailError);
+      // Nu oprim procesul dacă email-ul nu se trimite
+    }
+
+    return {
+      code: 200,
+      success: true,
+      message: "Programare saved successfully",
+      programare: data,
+    };
+  } catch (error) {
+    console.log("Error saving programare:", error);
+    return {
+      code: 500,
+      success: false,
+      message: "Error saving programare",
+      error: error.message,
+    };
+  }
+};
+
+const checkForConflicts = async (date, startTime, endTime, machine) => {
+  try {
+    // Convertim data în format consistent pentru comparare
+    const targetDate = dayjs(date).format("DD/MM/YYYY");
+    
+    // Query pentru programările din aceeași zi
+    const programariRef = db.collection("programari")
+      .where("active.status", "==", true)
+      .where("machine", "==", machine);
+    
+    const snapshot = await programariRef.get();
+    
+    if (snapshot.empty) {
+      return { hasConflict: false, conflicts: [] };
+    }
+
+    const conflicts = [];
+    
+    snapshot.forEach((doc) => {
+      const programare = doc.data();
+      const programareDate = dayjs(programare.date).format("DD/MM/YYYY");
+      
+      // Verificăm doar programările din aceeași zi
+      if (programareDate === targetDate) {
+        // Verificăm dacă intervalele se suprapun
+        const hasTimeConflict = checkTimeOverlap(
+          startTime,
+          endTime,
+          programare.start_interval_time,
+          programare.final_interval_time
+        );
+        
+        if (hasTimeConflict) {
+          conflicts.push({
+            uid: doc.id,
+            user: programare.user.numeComplet,
+            camera: programare.user.camera,
+            start_time: programare.start_interval_time,
+            end_time: programare.final_interval_time
+          });
+        }
+      }
+    });
+
+    return {
+      hasConflict: conflicts.length > 0,
+      conflicts: conflicts
+    };
+    
+  } catch (error) {
+    console.log("Error checking for conflicts:", error);
+    throw error;
+  }
+};
+
+const checkTimeOverlap = (start1, end1, start2, end2) => {
+  // Convertim orele în minute pentru comparare mai ușoară
+  const timeToMinutes = (timeStr) => {
+    const [hours, minutes] = timeStr.split(':').map(Number);
+    return hours * 60 + minutes;
+  };
+
+  const start1Minutes = timeToMinutes(start1);
+  const end1Minutes = timeToMinutes(end1);
+  const start2Minutes = timeToMinutes(start2);
+  const end2Minutes = timeToMinutes(end2);
+
+  // Verificăm dacă intervalele se suprapun
+  // Două intervale se suprapun dacă:
+  // start1 < end2 && start2 < end1
+  return start1Minutes < end2Minutes && start2Minutes < end1Minutes;
+};
+
+const getAllProgramari = async (req, res) => {
+  try {
+    const programareRef = db.collection("programari");
+    const snapshot = await programareRef.get();
+    if (snapshot.empty) {
+      return {
+        code: 404,
+        success: false,
+        message: "No programari found",
+      };
+    }
+    const programari = [];
+    snapshot.forEach((doc) => {
+      const data = doc.data();
+      // Only include active bookings for Home page display
+      if (data.active && data.active.status === true) {
+        programari.push({ uid: doc.id, ...data });
+      }
+    });
+    return {
+      code: 200,
+      success: true,
+      programari: programari,
+      message: "Programari fetched successfully",
+    };
+  } catch (error) {
+    console.log("Error fetching programari:", error);
+    return {
+      code: 500,
+      success: false,
+      message: "Error fetching programari",
+      error: error.message,
+    };
+  }
+};
+
+const getProgramareByUserUid = async (req, res) => {
+  const { uid } = req.params;
+  try {
+    const programariRef = db
+      .collection("programari")
+      .where("user.uid", "==", uid);
+    const snapshot = await programariRef.get();
+    if (snapshot.empty) {
+      return {
+        code: 404,
+        success: false,
+        message: "No programari found for this user",
+      };
+    }
+
+    const programari = [];
+    snapshot.forEach((doc) => {
+      // Include ALL bookings for MyBooks (active and cancelled)
+      programari.push({ uid: doc.id, ...doc.data() });
+    });
+    
+    // Sort by date (newest first)
+    programari.sort((a, b) => {
+      const dateA = dayjs(a.date, 'DD/MM/YYYY');
+      const dateB = dayjs(b.date, 'DD/MM/YYYY');
+      return dateB.diff(dateA);
+    });
+    
+    return {
+      code: 200,
+      success: true,
+      programari: programari,
+      message: "Programari found for this user",
+    };
+  } catch (error) {
+    console.log("Error fetching programari:", error);
+    return {
+      code: 500,
+      success: false,
+      message: "Error fetching programari",
+      error: error.message,
+    };
+  }
+};
+
+const updateProgramare = async (req, res) => {
+  const { programareId, updatedData } = req.body;
+  
+  try {
+    // Dacă se actualizează timpul sau mașina, verificăm conflictele
+    if (updatedData.start_interval_time || updatedData.final_interval_time || updatedData.machine || updatedData.date) {
+      // Obținem programarea existentă
+      const existingProgramareRef = db.collection("programari").doc(programareId);
+      const existingDoc = await existingProgramareRef.get();
+      
+      if (!existingDoc.exists) {
+        return {
+          code: 404,
+          success: false,
+          message: "Programare not found",
+        };
+      }
+      
+      const existingData = existingDoc.data();
+      
+      // Construim datele finale (combinând existente cu actualizate)
+      const finalData = {
+        date: updatedData.date || existingData.date,
+        start_interval_time: updatedData.start_interval_time || existingData.start_interval_time,
+        final_interval_time: updatedData.final_interval_time || existingData.final_interval_time,
+        machine: updatedData.machine || existingData.machine
+      };
+      
+      // Verificăm conflicte, excludând programarea curentă
+      const conflictCheck = await checkForConflictsExcluding(
+        finalData.date,
+        finalData.start_interval_time,
+        finalData.final_interval_time,
+        finalData.machine,
+        programareId
+      );
+
+      if (conflictCheck.hasConflict) {
+        return {
+          code: 409,
+          success: false,
+          message: "Există deja o programare pentru această mașină în intervalul selectat!",
+          conflictDetails: conflictCheck.conflicts
+        };
+      }
+    }
+
+    const programareRef = db.collection("programari").doc(programareId);
+    await programareRef.update(updatedData);
+    const updatedDoc = await programareRef.get();
+    
+    return {
+      code: 200,
+      success: true,
+      message: "Programare updated successfully",
+      programare: { uid: programareId, ...updatedDoc.data() },
+    };
+  } catch (error) {
+    console.log("Error updating programare:", error);
+    return {
+      code: 500,
+      success: false,
+      message: "Error updating programare",
+      error: error.message,
+    };
+  }
+};
+
+// Funcție helper pentru verificarea conflictelor excluzând o anumită programare
+const checkForConflictsExcluding = async (date, startTime, endTime, machine, excludeId) => {
+  try {
+    const targetDate = dayjs(date).format("DD/MM/YYYY");
+    
+    const programariRef = db.collection("programari")
+      .where("active.status", "==", true)
+      .where("machine", "==", machine);
+    
+    const snapshot = await programariRef.get();
+    
+    if (snapshot.empty) {
+      return { hasConflict: false, conflicts: [] };
+    }
+
+    const conflicts = [];
+    
+    snapshot.forEach((doc) => {
+      // Excludem programarea curentă din verificare
+      if (doc.id === excludeId) return;
+      
+      const programare = doc.data();
+      const programareDate = dayjs(programare.date).format("DD/MM/YYYY");
+      
+      if (programareDate === targetDate) {
+        const hasTimeConflict = checkTimeOverlap(
+          startTime,
+          endTime,
+          programare.start_interval_time,
+          programare.final_interval_time
+        );
+        
+        if (hasTimeConflict) {
+          conflicts.push({
+            uid: doc.id,
+            user: programare.user.numeComplet,
+            camera: programare.user.camera,
+            start_time: programare.start_interval_time,
+            end_time: programare.final_interval_time
+          });
+        }
+      }
+    });
+
+    return {
+      hasConflict: conflicts.length > 0,
+      conflicts: conflicts
+    };
+    
+  } catch (error) {
+    console.log("Error checking for conflicts:", error);
+    throw error;
+  }
+};
+
+const deleteProgramare = async (req, res) => {
+  const { uid } = req.params;
+
+  try {
+    const programareRef = db.collection("programari").doc(uid);
+    await programareRef.delete();
+    return {
+      code: 200,
+      success: true,
+      message: "Programare deleted successfully",
+    };
+  } catch (error) {
+    console.log("Error deleting programare:", error);
+    return {
+      code: 500,
+      success: false,
+      message: "Error deleting programare",
+      error: error.message,
+    };
+  }
+};
+
+// Delete booking with reason (admin only)
+const deleteProgramareWithReason = async (req, res) => {
+  const { bookingId, reason } = req.body;
+
+  try {
+    // Get booking details
+    const bookingRef = db.collection("programari").doc(bookingId);
+    const bookingDoc = await bookingRef.get();
+    
+    if (!bookingDoc.exists) {
+      return {
+        code: 404,
+        success: false,
+        message: "Booking not found",
+      };
+    }
+    
+    const bookingData = bookingDoc.data();
+    
+    // Get user details
+    const userRef = db.collection("users").doc(bookingData.user.uid);
+    const userDoc = await userRef.get();
+    
+    if (!userDoc.exists) {
+      console.warn(`User ${bookingData.user.uid} not found in users collection`);
+    }
+    
+    const userData = userDoc.exists ? userDoc.data() : null;
+    
+    // Create notification
+    await db.collection("notifications").add({
+      userId: bookingData.user.uid,
+      date: bookingData.date,
+      machine: bookingData.machine,
+      startTime: bookingData.start_interval_time,
+      endTime: bookingData.final_interval_time,
+      duration: bookingData.duration || calculateDuration(bookingData.start_interval_time, bookingData.final_interval_time),
+      reason: reason,
+      createdAt: new Date(),
+      userDetails: {
+        numeComplet: bookingData.user.numeComplet,
+        camera: bookingData.user.camera,
+        email: userData?.google?.email || userData?.email || bookingData.user.email
+      }
+    });
+    
+    // Delete the booking
+    await bookingRef.delete();
+    
+    return {
+      code: 200,
+      success: true,
+      message: "Booking deleted and notification created successfully",
+      deletedBooking: {
+        id: bookingId,
+        ...bookingData
+      },
+      userEmail: userData?.google?.email || userData?.email || bookingData.user.email
+    };
+  } catch (error) {
+    console.error("Error deleting booking:", error);
+    return {
+      code: 500,
+      success: false,
+      message: "Error deleting booking",
+      error: error.message,
+    };
+  }
+};
+
+// Helper function to calculate duration
+const calculateDuration = (startTime, endTime) => {
+  const [startHours, startMinutes] = startTime.split(':').map(Number);
+  const [endHours, endMinutes] = endTime.split(':').map(Number);
+  
+  const startTotalMinutes = startHours * 60 + startMinutes;
+  const endTotalMinutes = endHours * 60 + endMinutes;
+  
+  return endTotalMinutes - startTotalMinutes;
+};
+
+// Get filtered bookings for admin
+const getFilteredBookings = async (req, res) => {
+  const { searchTerm, showActiveOnly } = req.query;
+  
+  try {
+    const programariRef = db.collection("programari");
+    const snapshot = await programariRef.get();
+    
+    if (snapshot.empty) {
+      return {
+        code: 200,
+        success: true,
+        bookings: [],
+        message: "No bookings found",
+      };
+    }
+    
+    let bookings = [];
+    snapshot.forEach((doc) => {
+      const data = doc.data();
+      // Only include active bookings for Admin page display
+      if (data.active && data.active.status === true) {
+        bookings.push({ 
+          uid: doc.id, 
+          ...data,
+          userDetails: {
+            numeComplet: data.user?.numeComplet || 'N/A',
+            camera: data.user?.camera || 'N/A',
+            email: data.user?.email || 'N/A'
+          }
+        });
+      }
+    });
+    
+    // Filter active bookings if requested
+    if (showActiveOnly === 'true') {
+      const currentDate = dayjs().startOf('day');
+      bookings = bookings.filter(booking => {
+        const bookingDate = dayjs(booking.date, 'DD/MM/YYYY');
+        return bookingDate.isSameOrAfter(currentDate);
+      });
+    }
+    
+    // Filter by search term if provided
+    if (searchTerm) {
+      bookings = bookings.filter(booking =>
+        booking.user?.numeComplet?.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+    }
+    
+    // Sort by date (newest first)
+    bookings.sort((a, b) => {
+      const dateA = dayjs(a.date, 'DD/MM/YYYY');
+      const dateB = dayjs(b.date, 'DD/MM/YYYY');
+      return dateB.diff(dateA);
+    });
+    
+    return {
+      code: 200,
+      success: true,
+      bookings: bookings,
+      message: "Bookings fetched successfully",
+    };
+  } catch (error) {
+    console.error("Error fetching filtered bookings:", error);
+    return {
+      code: 500,
+      success: false,
+      message: "Error fetching bookings",
+      error: error.message,
+    };
+  }
+};
+
+// Cancel booking with reason (admin only) - sets active.status = false instead of deleting
+const cancelProgramareWithReason = async (req, res) => {
+  const { bookingId, reason } = req.body;
+
+  try {
+    // Get booking details
+    const bookingRef = db.collection("programari").doc(bookingId);
+    const bookingDoc = await bookingRef.get();
+    
+    if (!bookingDoc.exists) {
+      return {
+        code: 404,
+        success: false,
+        message: "Booking not found",
+      };
+    }
+    
+    const bookingData = bookingDoc.data();
+    
+    // Update the booking to set active.status = false and add cancellation reason
+    const updatedData = {
+      active: {
+        status: false,
+        message: reason,
+        cancelledAt: new Date(),
+        cancelledBy: "admin"
+      }
+    };
+
+    await bookingRef.update(updatedData);
+    
+    // Get user details
+    const userRef = db.collection("users").doc(bookingData.user.uid);
+    const userDoc = await userRef.get();
+    
+    const userData = userDoc.exists ? userDoc.data() : null;
+    
+    // Create notification for user to see in MyBooks
+    const notificationData = {
+      userId: bookingData.user.uid,
+      type: "booking_cancelled",
+      message: `Programarea ta pentru ${bookingData.machine} din data ${dayjs(bookingData.date).format("DD/MM/YYYY")} (${bookingData.start_interval_time} - ${bookingData.final_interval_time}) a fost anulată. Motiv: ${reason}`,
+      date: bookingData.date,
+      machine: bookingData.machine,
+      startTime: bookingData.start_interval_time,
+      endTime: bookingData.final_interval_time,
+      duration: bookingData.duration || calculateDuration(bookingData.start_interval_time, bookingData.final_interval_time),
+      reason: reason,
+      createdAt: new Date(),
+      read: false,
+      userDetails: {
+        numeComplet: bookingData.user.numeComplet,
+        camera: bookingData.user.camera,
+        email: userData?.google?.email || userData?.email || bookingData.user.email
+      }
+    };
+
+    const notificationRef = await db.collection("notifications").add(notificationData);
+    const notification = {
+      uid: notificationRef.id,
+      ...notificationData
+    };
+
+    // Emit socket event for real-time notification
+    getIO().emit("notification", {
+      userId: bookingData.user.uid,
+      notification: notification
+    });
+
+    // Trimitem email de anulare
+    try {
+      const { sendDeletedBookingEmail } = await import('./emailService.js');
+      
+      // Normalizăm data pentru email
+      let normalizedDate = bookingData.date;
+      if (typeof bookingData.date === 'string' && bookingData.date.includes('T')) {
+        // Convertim din ISO format în DD/MM/YYYY
+        normalizedDate = dayjs(bookingData.date).format('DD/MM/YYYY');
+      }
+      
+      const emailData = {
+        to: userData?.google?.email || userData?.email || bookingData.user.email,
+        fullName: bookingData.user.numeComplet,
+        room: bookingData.user.camera,
+        machine: bookingData.machine,
+        date: normalizedDate,
+        startTime: bookingData.start_interval_time,
+        duration: calculateDuration(bookingData.start_interval_time, bookingData.final_interval_time),
+        reason: reason
+      };
+      
+      console.log('Delete email data being sent:', emailData);
+      
+      const emailResult = await sendDeletedBookingEmail({ body: emailData });
+      console.log('Cancellation email sent successfully:', emailResult);
+    } catch (emailError) {
+      console.error('Error sending cancellation email:', emailError);
+      // Nu oprim procesul dacă email-ul nu se trimite
+    }
+    
+    // Get updated booking data
+    const updatedBookingDoc = await bookingRef.get();
+    const cancelledBooking = {
+      uid: bookingId,
+      ...updatedBookingDoc.data()
+    };
+    
+    return {
+      code: 200,
+      success: true,
+      message: "Booking cancelled successfully",
+      cancelledBooking: cancelledBooking,
+      userEmail: userData?.google?.email || userData?.email || bookingData.user.email
+    };
+  } catch (error) {
+    console.error("Error cancelling booking:", error);
+    return {
+      code: 500,
+      success: false,
+      message: "Error cancelling booking",
+      error: error.message,
+    };
+  }
+};
+
+export {
+  saveProgramare,
+  getAllProgramari,
+  getProgramareByUserUid,
+  updateProgramare,
+  deleteProgramare,
+  deleteProgramareWithReason,
+  cancelProgramareWithReason,
+  getFilteredBookings,
+};
