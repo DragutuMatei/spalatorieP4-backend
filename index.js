@@ -15,6 +15,12 @@ import { createServer } from "http";
 import { Server } from "socket.io";
 import { setIO } from "./src/utils/socket.js";
 import settingsRouter from "./src/routes/settingsRoutes.js";
+import dayjs from "dayjs";
+import utc from "dayjs/plugin/utc.js";
+import timezone from "dayjs/plugin/timezone.js";
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
 
 app.use(bodyParser.json({ limit: "1500mb" }));
 app.use(
@@ -115,32 +121,54 @@ setInterval(cleanExpiredReservations, 1 * 60 * 1000);
 
 // Endpoint pentru generarea fișierului .ics
 app.get("/generate-ics", (req, res) => {
-  const { type, machine, date, startTime, duration, room, fullName } =
-    req.query;
+  const { machine, date, startTime, duration, room, fullName } = req.query;
 
   try {
-    const startDateTimeOld = new Date(`${date}T${startTime}:00`);
-    const startDateTime = new Date(
-      startDateTimeOld.getTime() + 3 * 60 * 60 * 1000
-    );
-    const endDateTime = new Date(
-      startDateTime.getTime() + parseInt(duration) * 60 * 1000
+    const normalizeDate = (dateStr = "") => {
+      if (dateStr.includes("T")) {
+        return dayjs(dateStr).format("YYYY-MM-DD");
+      }
+      if (dateStr.includes("/")) {
+        const [day, month, year] = dateStr.split("/");
+        return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+      }
+      const parsed = dayjs(dateStr);
+      return parsed.isValid() ? parsed.format("YYYY-MM-DD") : dateStr;
+    };
+
+    const normalizedDate = normalizeDate(date);
+    const startLocal = dayjs.tz(
+      `${normalizedDate} ${startTime}`,
+      "YYYY-MM-DD HH:mm",
+      "Europe/Bucharest"
     );
 
-    const formatDate = (date) => {
-      return date.toISOString().replace(/[-:]/g, "").slice(0, 15);
-    };
+    if (!startLocal.isValid()) {
+      throw new Error(
+        `Invalid start date/time received: ${normalizedDate} ${startTime}`
+      );
+    }
+
+    const durationMinutes = parseInt(duration, 10);
+    if (Number.isNaN(durationMinutes)) {
+      throw new Error(`Invalid duration received: ${duration}`);
+    }
+
+    const endLocal = startLocal.add(durationMinutes, "minute");
+
+    const formatUtc = (value) => value.utc().format("YYYYMMDDTHHmmss[Z]");
+    const formatStamp = (value) => value.utc().format("YYYYMMDDTHHmmss[Z]");
 
     const icsContent = `BEGIN:VCALENDAR
 VERSION:2.0
 PRODID:-//Spălătorie Cămin//EN
 BEGIN:VEVENT
 UID:${Date.now()}@spalatorie-camin.ro
-DTSTAMP:${formatDate(new Date())}
-DTSTART:${formatDate(startDateTime)}
-DTEND:${formatDate(endDateTime)}
+DTSTAMP:${formatStamp(dayjs())}
+DTSTART:${formatUtc(startLocal)}
+DTEND:${formatUtc(endLocal)}
 SUMMARY:Rezervare ${machine}
-DESCRIPTION:Rezervare ${machine} pentru ${fullName} (Camera ${room}) - Durata: ${duration} minute
+DESCRIPTION:Rezervare ${machine} pentru ${fullName} (Camera ${room}) - Durata: ${durationMinutes} minute
 LOCATION:Spălătorie Cămin
 END:VEVENT
 END:VCALENDAR`;
@@ -148,7 +176,7 @@ END:VCALENDAR`;
     res.setHeader("Content-Type", "text/calendar");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="rezervare-${machine}-${date}.ics"`
+      `attachment; filename="rezervare-${machine}-${startLocal.format("YYYY-MM-DD")}.ics"`
     );
     res.send(icsContent);
   } catch (error) {

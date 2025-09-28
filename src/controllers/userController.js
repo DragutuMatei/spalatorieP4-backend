@@ -8,6 +8,11 @@ export const saveUserController = async (req, res) => {
   console.log(result);
 
   if (code === 200) {
+    getIO().emit("userUpdate", {
+      userId: req.body.uid,
+      user: result.user,
+      action: result.requiresReapproval ? "reapproval_required" : "profile_updated",
+    });
     return res.status(200).json(result);
   } else if (code === 500) {
     return res.status(500).json(result);

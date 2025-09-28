@@ -22,52 +22,55 @@ const sendBookingConfirmationEmail = async (emailData) => {
   try {
     // Handle both ISO format and DD/MM/YYYY format
     let dateForCalendar;
-    if (typeof date === 'string' && date.includes('T')) {
+    if (typeof date === "string" && date.includes("T")) {
       // ISO format - extract just the date part
-      dateForCalendar = date.split('T')[0];
-    } else if (typeof date === 'string' && date.includes('/')) {
+      dateForCalendar = date.split("T")[0];
+    } else if (typeof date === "string" && date.includes("/")) {
       // DD/MM/YYYY format - convert to YYYY-MM-DD
-      const [day, month, year] = date.split('/');
-      dateForCalendar = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+      const [day, month, year] = date.split("/");
+      dateForCalendar = `${year}-${month.padStart(2, "0")}-${day.padStart(
+        2,
+        "0"
+      )}`;
     } else {
       // Try to parse with dayjs and format
-      dateForCalendar = dayjs(date).format('YYYY-MM-DD');
+      dateForCalendar = dayjs(date).format("YYYY-MM-DD");
     }
 
-    const startDateTimeOld = new Date(`${dateForCalendar}T${startTime}:00`);
-    
-    // Validate the date
-    if (isNaN(startDateTimeOld.getTime())) {
-      throw new Error(`Invalid date created: ${dateForCalendar}T${startTime}:00`);
-    }
-    
-    const startDateTime = new Date(
-      startDateTimeOld.getTime() + 3 * 60 * 60 * 1000
-    );
-    const endDateTime = new Date(
-      startDateTime.getTime() + duration * 60 * 1000
+    const startDateTime = dayjs.tz(
+      `${dateForCalendar} ${startTime}`,
+      "YYYY-MM-DD HH:mm",
+      "Europe/Bucharest"
     );
 
-    const formattedDate = dayjs(startDateTime).format("DD-MMM-YYYY");
-    const formattedTime = startTime;
+    if (!startDateTime.isValid()) {
+      throw new Error(
+        `Invalid start datetime: ${dateForCalendar} ${startTime}`
+      );
+    }
+
+    const endDateTime = startDateTime.add(duration, "minute");
+
+    const formattedDate = startDateTime.format("DD-MMM-YYYY");
+    const formattedTime = startDateTime.format("HH:mm");
 
     const googleCalendarUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(
       `Rezervare ${machine}`
     )}&dates=${startDateTime
-      .toISOString()
-      .replace(/[-:]/g, "")
-      .slice(0, 15)}/${endDateTime
-      .toISOString()
-      .replace(/[-:]/g, "")
-      .slice(0, 15)}&details=${encodeURIComponent(
+      .utc()
+      .format("YYYYMMDDTHHmmss[Z]")}/${endDateTime
+      .utc()
+      .format("YYYYMMDDTHHmmss[Z]")}&details=${encodeURIComponent(
       `Rezervare ${machine} pentru ${fullName} (Camera ${room}) - Durata: ${duration} minute`
     )}&location=${encodeURIComponent("Spălătorie Cămin")}&ctz=Europe/Bucharest`;
 
     const port = process.env.PORT || 3001;
-    const icsUrl = `http://localhost:${port}/generate-ics?type=booking&machine=${encodeURIComponent(
+    const icsUrl = `${
+      process.env.BACKEND_LINK
+    }/generate-ics?type=booking&machine=${encodeURIComponent(
       machine
-    )}&date=${encodeURIComponent(date)}&startTime=${encodeURIComponent(
-      startTime
+    )}&date=${encodeURIComponent(startDateTime.format("YYYY-MM-DD"))}&startTime=${encodeURIComponent(
+      startDateTime.format("HH:mm")
     )}&duration=${duration}&room=${encodeURIComponent(
       room
     )}&fullName=${encodeURIComponent(fullName)}`;
@@ -110,30 +113,35 @@ const sendDeletedBookingEmail = async (req, res) => {
   try {
     // Handle both ISO format and DD/MM/YYYY format
     let dateForCalendar;
-    if (typeof date === 'string' && date.includes('T')) {
+    if (typeof date === "string" && date.includes("T")) {
       // ISO format - extract just the date part
-      dateForCalendar = date.split('T')[0];
-    } else if (typeof date === 'string' && date.includes('/')) {
+      dateForCalendar = date.split("T")[0];
+    } else if (typeof date === "string" && date.includes("/")) {
       // DD/MM/YYYY format - convert to YYYY-MM-DD
-      const [day, month, year] = date.split('/');
-      dateForCalendar = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+      const [day, month, year] = date.split("/");
+      dateForCalendar = `${year}-${month.padStart(2, "0")}-${day.padStart(
+        2,
+        "0"
+      )}`;
     } else {
       // Try to parse with dayjs and format
-      dateForCalendar = dayjs(date).format('YYYY-MM-DD');
+      dateForCalendar = dayjs(date).format("YYYY-MM-DD");
     }
 
-    const startDateTimeOld = new Date(`${dateForCalendar}T${startTime}:00`);
-    
-    // Validate the date
-    if (isNaN(startDateTimeOld.getTime())) {
-      throw new Error(`Invalid date created: ${dateForCalendar}T${startTime}:00`);
-    }
-    
-    const startDateTime = new Date(
-      startDateTimeOld.getTime() + 3 * 60 * 60 * 1000
+    const startDateTime = dayjs.tz(
+      `${dateForCalendar} ${startTime}`,
+      "YYYY-MM-DD HH:mm",
+      "Europe/Bucharest"
     );
-    const formattedDate = dayjs(startDateTime).format("DD-MMM-YYYY");
-    const formattedTime = startTime;
+
+    if (!startDateTime.isValid()) {
+      throw new Error(
+        `Invalid date created: ${dateForCalendar} ${startTime}`
+      );
+    }
+
+    const formattedDate = startDateTime.format("DD-MMM-YYYY");
+    const formattedTime = startDateTime.format("HH:mm");
 
     await transporter.sendMail({
       from: '"Spălătorie Cămin" <spalatoriep4@osfiir.ro>',
@@ -198,16 +206,13 @@ const sendCancelledBookingEmail = async (req, res) => {
   try {
     console.log("Sending cancelled booking email notification:", {
       to,
-      subject: "Programare anulată - Spălătorie P4",
-      content: {
-        fullName,
-        room,
-        machine,
-        date,
-        startTime,
-        endTime,
-        reason,
-      },
+      fullName,
+      room,
+      machine,
+      date,
+      startTime,
+      endTime,
+      reason,
     });
 
     // Simulate email sending delay

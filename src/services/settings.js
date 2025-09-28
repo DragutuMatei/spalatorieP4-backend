@@ -6,8 +6,12 @@ const saveSetting = async (key, value) => {
     const settingsRef = db.collection("settings").doc("availability");
     await settingsRef.set({ [key]: value }, { merge: true });
     const saveDoc = await settingsRef.get();
-    const settingsData = saveDoc.data();
-    
+    const settingsData = saveDoc.data() || {};
+
+    if (settingsData.blockPastSlots === undefined) {
+      settingsData.blockPastSlots = false;
+    }
+
     console.log('Settings after save:', settingsData);
 
     return {
@@ -36,7 +40,8 @@ const getSettings = async () => {
       const defaultSettings = {
         dryerEnabled: true,
         m1Enabled: true,
-        m2Enabled: true
+        m2Enabled: true,
+        blockPastSlots: false,
       };
       await settingsRef.set(defaultSettings);
       return {
@@ -46,11 +51,20 @@ const getSettings = async () => {
         settings: { uid: settings.id, ...defaultSettings },
       };
     }
+    const data = settings.data() || {};
+
+    let settingsData = { uid: settings.id, ...data };
+
+    if (settingsData.blockPastSlots === undefined) {
+      await settingsRef.set({ blockPastSlots: false }, { merge: true });
+      settingsData.blockPastSlots = false;
+    }
+
     return {
       code: 200,
       success: true,
       message: "Settings retrieved!",
-      settings: { uid: settings.id, ...settings.data() },
+      settings: settingsData,
     };
   } catch (error) {
     console.log(error);

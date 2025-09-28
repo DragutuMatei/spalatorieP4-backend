@@ -16,7 +16,23 @@ const saveUser = async (req, res) => {
       };
     }
 
-    await userRef.set(userData, { merge: true });
+    const existingData = existingUserDoc.exists ? existingUserDoc.data() : {};
+    const dataToSave = { ...userData };
+
+    let requiresReapproval = false;
+    if (existingUserDoc.exists && !req?.body?.preventOverwrite) {
+      const sensitiveFields = ["numeComplet", "camera", "telefon"];
+      requiresReapproval = sensitiveFields.some((field) => {
+        if (dataToSave[field] === undefined) return false;
+        return dataToSave[field] !== existingData[field];
+      });
+
+      if (requiresReapproval) {
+        dataToSave.validate = false;
+      }
+    }
+
+    await userRef.set(dataToSave, { merge: true });
     const savedDoc = await userRef.get();
 
     const programariRef = db
@@ -57,6 +73,7 @@ const saveUser = async (req, res) => {
       success: true,
       message: "User saved successfully",
       user: savedDoc.data(),
+      requiresReapproval,
     };
   } catch (error) {
     console.error("Error saving user:", error);
