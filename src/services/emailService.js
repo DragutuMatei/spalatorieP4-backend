@@ -56,20 +56,18 @@ const sendBookingConfirmationEmail = async (emailData) => {
 
     const googleCalendarUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(
       `Rezervare ${machine}`
-    )}&dates=${startDateTime
-      .utc()
-      .format("YYYYMMDDTHHmmss[Z]")}/${endDateTime
+    )}&dates=${startDateTime.utc().format("YYYYMMDDTHHmmss[Z]")}/${endDateTime
       .utc()
       .format("YYYYMMDDTHHmmss[Z]")}&details=${encodeURIComponent(
       `Rezervare ${machine} pentru ${fullName} (Camera ${room}) - Durata: ${duration} minute`
     )}&location=${encodeURIComponent("Spălătorie Cămin")}&ctz=Europe/Bucharest`;
 
     const port = process.env.PORT || 3001;
-    const icsUrl = `${
-      process.env.BACKEND_LINK
-    }/generate-ics?type=booking&machine=${encodeURIComponent(
+    const icsUrl = `https://eager-crin-osfiir-5be47044.koyeb.app/generate-ics?type=booking&machine=${encodeURIComponent(
       machine
-    )}&date=${encodeURIComponent(startDateTime.format("YYYY-MM-DD"))}&startTime=${encodeURIComponent(
+    )}&date=${encodeURIComponent(
+      startDateTime.format("YYYY-MM-DD")
+    )}&startTime=${encodeURIComponent(
       startDateTime.format("HH:mm")
     )}&duration=${duration}&room=${encodeURIComponent(
       room
@@ -135,9 +133,7 @@ const sendDeletedBookingEmail = async (req, res) => {
     );
 
     if (!startDateTime.isValid()) {
-      throw new Error(
-        `Invalid date created: ${dateForCalendar} ${startTime}`
-      );
+      throw new Error(`Invalid date created: ${dateForCalendar} ${startTime}`);
     }
 
     const formattedDate = startDateTime.format("DD-MMM-YYYY");
