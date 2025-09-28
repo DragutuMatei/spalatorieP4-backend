@@ -28,6 +28,7 @@ const saveUser = async (req, res) => {
               camera: savedDoc.data().camera,
               uid: savedDoc.id,
               email: savedDoc.data().google.email,
+              telefon: savedDoc.data().telefon || "",
             },
           },
           { merge: true }
