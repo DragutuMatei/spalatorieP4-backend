@@ -180,6 +180,15 @@ const toggleUserRole = async (req, res) => {
   const { userId, role } = req.body;
 
   try {
+    const allowedRoles = ["admin", "user"];
+    if (!allowedRoles.includes(role)) {
+      return {
+        code: 400,
+        success: false,
+        message: "Invalid role provided",
+      };
+    }
+
     const userRef = db.collection("users").doc(userId);
     const userDoc = await userRef.get();
 
@@ -191,8 +200,7 @@ const toggleUserRole = async (req, res) => {
       };
     }
 
-    const newRole = role === "admin" ? "user" : "admin";
-    await userRef.update({ role: newRole });
+    await userRef.update({ role });
     
     // Get updated user data
     const updatedUserDoc = await userRef.get();
@@ -201,7 +209,7 @@ const toggleUserRole = async (req, res) => {
     return {
       code: 200,
       success: true,
-      message: `User role updated to ${newRole} successfully`,
+      message: `User role updated to ${role} successfully`,
       user: updatedUser,
     };
   } catch (error) {
