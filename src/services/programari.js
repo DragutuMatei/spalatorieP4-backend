@@ -2,6 +2,51 @@ import { db } from "../utils/admin_fire.js";
 import { getIO } from "../utils/socket.js";
 import { sendBookingConfirmationEmail } from "./emailService.js";
 import dayjs from "dayjs";
+import utc from "dayjs/plugin/utc.js";
+import timezone from "dayjs/plugin/timezone.js";
+import customParseFormat from "dayjs/plugin/customParseFormat.js";
+
+dayjs.extend(utc);
+dayjs.extend(timezone);
+dayjs.extend(customParseFormat);
+
+const BUCURESTI_TZ = "Europe/Bucharest";
+
+const toBucharestDayjs = (value) => {
+  if (value === undefined || value === null) {
+    return dayjs.invalid();
+  }
+
+  if (dayjs.isDayjs(value)) {
+    return value.tz(BUCURESTI_TZ);
+  }
+
+  if (value instanceof Date || typeof value === "number") {
+    return dayjs(value).tz(BUCURESTI_TZ);
+  }
+
+  if (typeof value === "string") {
+    if (value.includes("T")) {
+      return dayjs.tz(value, BUCURESTI_TZ);
+    }
+
+    if (value.includes("/")) {
+      return dayjs.tz(value, "DD/MM/YYYY", BUCURESTI_TZ);
+    }
+
+    if (value.includes("-")) {
+      return dayjs.tz(value, "YYYY-MM-DD", BUCURESTI_TZ);
+    }
+  }
+
+  const parsed = dayjs(value);
+  return parsed.isValid() ? parsed.tz(BUCURESTI_TZ) : dayjs.invalid();
+};
+
+const formatBucharestDate = (value, formatStr = "DD/MM/YYYY") => {
+  const date = toBucharestDayjs(value);
+  return date.isValid() ? date.format(formatStr) : "";
+};
 
 const saveProgramare = async (req, res) => {
   const { programareData } = req.body;
@@ -57,13 +102,9 @@ const saveProgramare = async (req, res) => {
     // Trimitem email de confirmare
     try {
       // Normalizăm data pentru email
-      let normalizedDate = programareData.date;
-      if (
-        typeof programareData.date === "string" &&
-        programareData.date.includes("T")
-      ) {
-        // Convertim din ISO format în DD/MM/YYYY
-        normalizedDate = dayjs(programareData.date).format("DD/MM/YYYY");
+      let normalizedDate = formatBucharestDate(programareData.date);
+      if (!normalizedDate) {
+        normalizedDate = formatBucharestDate(dayjs().tz(BUCURESTI_TZ));
       }
 
       const emailData = {
@@ -153,7 +194,7 @@ const getProgramareByUserUid = async (req, res) => {
 const checkForConflicts = async (date, startTime, endTime, machine) => {
   try {
     // Convertim data în format consistent pentru comparare
-    const targetDate = dayjs(date).format("DD/MM/YYYY");
+    const targetDate = formatBucharestDate(date);
 
     // Query pentru programările din aceeași zi
     const programariRef = db
@@ -171,7 +212,7 @@ const checkForConflicts = async (date, startTime, endTime, machine) => {
 
     snapshot.forEach((doc) => {
       const programare = doc.data();
-      const programareDate = dayjs(programare.date).format("DD/MM/YYYY");
+      const programareDate = formatBucharestDate(programare.date);
 
       // Verificăm doar programările din aceeași zi
       if (programareDate === targetDate) {
@@ -380,7 +421,7 @@ const checkForConflictsExcluding = async (
   excludeId
 ) => {
   try {
-    const targetDate = dayjs(date).format("DD/MM/YYYY");
+    const targetDate = formatBucharestDate(date);
 
     const programariRef = db
       .collection("programari")
@@ -399,7 +440,7 @@ const checkForConflictsExcluding = async (
       if (doc.id === excludeId) return;
 
       const programare = doc.data();
-      const programareDate = dayjs(programare.date).format("DD/MM/YYYY");
+      const programareDate = formatBucharestDate(programare.date);
 
       if (programareDate === targetDate) {
         const hasTimeConflict = checkTimeOverlap(
@@ -474,7 +515,7 @@ const deleteProgramare = async (req, res) => {
           fullName: bookingData.user?.numeComplet || "",
           room: bookingData.user?.camera || "",
           machine: bookingData.machine,
-          date: dayjs(bookingData.date).format("DD/MM/YYYY"),
+          date: formatBucharestDate(bookingData.date),
           startTime: bookingData.start_interval_time,
           endTime: bookingData.final_interval_time,
           reason: "Anulat de utilizator",
@@ -567,7 +608,7 @@ const deleteProgramareWithReason = async (req, res) => {
           fullName: bookingData.user.numeComplet,
           room: bookingData.user.camera,
           machine: bookingData.machine,
-          date: dayjs(bookingData.date).format("DD/MM/YYYY"),
+          date: formatBucharestDate(bookingData.date),
           startTime: bookingData.start_interval_time,
           duration: calculateDuration(
             bookingData.start_interval_time,
@@ -732,9 +773,9 @@ const cancelProgramareWithReason = async (req, res) => {
     const notificationData = {
       userId: bookingData.user.uid,
       type: "booking_cancelled",
-      message: `Programarea ta pentru ${bookingData.machine} din data ${dayjs(
+      message: `Programarea ta pentru ${bookingData.machine} din data ${formatBucharestDate(
         bookingData.date
-      ).format("DD/MM/YYYY")} (${bookingData.start_interval_time} - ${
+      )} (${bookingData.start_interval_time} - ${
         bookingData.final_interval_time
       }) a fost anulată. Motiv: ${reason}`,
       date: bookingData.date,
@@ -777,14 +818,7 @@ const cancelProgramareWithReason = async (req, res) => {
       const { sendDeletedBookingEmail } = await import("./emailService.js");
 
       // Normalizăm data pentru email
-      let normalizedDate = bookingData.date;
-      if (
-        typeof bookingData.date === "string" &&
-        bookingData.date.includes("T")
-      ) {
-        // Convertim din ISO format în DD/MM/YYYY
-        normalizedDate = dayjs(bookingData.date).format("DD/MM/YYYY");
-      }
+      let normalizedDate = formatBucharestDate(bookingData.date);
 
       const emailData = {
         to:
