@@ -25,9 +25,22 @@ const toBucharestDayjs = (value) => {
     return dayjs(value).tz(BUCURESTI_TZ);
   }
 
+  if (typeof value === "object") {
+    if (value.seconds !== undefined && value.nanoseconds !== undefined) {
+      return dayjs.unix(value.seconds + value.nanoseconds / 1_000_000_000).tz(BUCURESTI_TZ);
+    }
+
+    if (value._seconds !== undefined && value._nanoseconds !== undefined) {
+      return dayjs
+        .unix(value._seconds + value._nanoseconds / 1_000_000_000)
+        .tz(BUCURESTI_TZ);
+    }
+  }
+
   if (typeof value === "string") {
     if (value.includes("T")) {
-      return dayjs.tz(value, BUCURESTI_TZ);
+      const asUtc = dayjs.utc(value);
+      return asUtc.isValid() ? asUtc.tz(BUCURESTI_TZ) : dayjs.invalid();
     }
 
     if (value.includes("/")) {
