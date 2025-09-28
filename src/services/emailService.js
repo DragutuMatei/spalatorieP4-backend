@@ -52,6 +52,7 @@ const sendBookingConfirmationEmail = async (emailData) => {
     const endDateTime = startDateTime.add(duration, "minute");
 
     const formattedDate = startDateTime.format("DD-MMM-YYYY");
+    const displayDate = startDateTime.format("DD/MM/YYYY");
     const formattedTime = startDateTime.format("HH:mm");
 
     const googleCalendarUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(
@@ -80,7 +81,7 @@ const sendBookingConfirmationEmail = async (emailData) => {
       html: `
         <h2>Rezervare Confirmată</h2>
         <p>Bună, ${fullName}!</p>
-        <p>Ai rezervat <strong>${machine}</strong> pentru data de <strong>${date}</strong>, începând cu ora <strong>${startTime}</strong>, pentru <strong>${duration} minute</strong>.</p>
+        <p>Ai rezervat <strong>${machine}</strong> pentru data de <strong>${displayDate}</strong>, începând cu ora <strong>${startTime}</strong>, pentru <strong>${duration} minute</strong>.</p>
         <p>Camera: ${room}</p>
         <p>
           <a href="${googleCalendarUrl}" style="background-color: #2563eb; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-right: 10px;">Adaugă în Google Calendar</a>
@@ -146,7 +147,7 @@ const sendDeletedBookingEmail = async (req, res) => {
       html: `
         <h2>Rezervare Anulată</h2>
         <p>Bună, ${fullName}!</p>
-        <p>Rezervarea ta pentru <strong>${machine}</strong> din data de <strong>${date}</strong>, ora <strong>${startTime}</strong> (${duration} minute) a fost anulată.</p>
+        <p>Rezervarea ta pentru <strong>${machine}</strong> din data de <strong>${displayDate}</strong>, ora <strong>${startTime}</strong> (${duration} minute) a fost anulată.</p>
         <p>Motiv: ${reason}</p>
         <p>Camera: ${room}</p>
         <p>Contactează adminul pentru detalii.</p>
