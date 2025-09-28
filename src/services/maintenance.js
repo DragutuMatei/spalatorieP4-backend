@@ -1,6 +1,7 @@
 import { db } from "../utils/admin_fire.js";
 import { getIO } from "../utils/socket.js";
 import dayjs from "dayjs";
+import { sendDeletedBookingEmail } from "./emailService.js";
 
 // Add maintenance interval
 const addMaintenanceInterval = async (req, res) => {
@@ -121,6 +122,34 @@ const addMaintenanceInterval = async (req, res) => {
         };
 
         await db.collection("notifications").add(notificationData);
+
+        // Trimite email de anulare către utilizator, dacă avem o adresă validă
+        if (userEmail) {
+          try {
+            await sendDeletedBookingEmail({
+              body: {
+                to: userEmail,
+                fullName: updatedBooking.user?.numeComplet || "",
+                room: updatedBooking.user?.camera || "",
+                machine: updatedBooking.machine,
+                date: dayjs(updatedBooking.date).format("DD/MM/YYYY"),
+                startTime: updatedBooking.start_interval_time,
+                duration:
+                  updatedBooking.duration ||
+                  calculateDuration(
+                    updatedBooking.start_interval_time,
+                    updatedBooking.final_interval_time
+                  ),
+                reason: "Programarea a fost anulată din cauza mentenanței programate.",
+              },
+            });
+          } catch (emailError) {
+            console.error(
+              "Failed to send maintenance cancellation email:",
+              emailError
+            );
+          }
+        }
 
         getIO().emit("programare", { action: "update", programare: updatedBooking });
       } catch (cancelError) {
