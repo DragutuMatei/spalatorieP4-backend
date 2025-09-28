@@ -6,6 +6,16 @@ const saveUser = async (req, res) => {
 
   try {
     const userRef = db.collection("users").doc(uid);
+
+    const existingUserDoc = await userRef.get();
+    if (existingUserDoc.exists && req?.body?.preventOverwrite) {
+      return {
+        code: 409,
+        success: false,
+        message: "Un cont pentru acest utilizator există deja.",
+      };
+    }
+
     await userRef.set(userData, { merge: true });
     const savedDoc = await userRef.get();
 

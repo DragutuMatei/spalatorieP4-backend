@@ -436,7 +436,56 @@ const deleteProgramare = async (req, res) => {
 
   try {
     const programareRef = db.collection("programari").doc(uid);
+    const bookingDoc = await programareRef.get();
+
+    if (!bookingDoc.exists) {
+      return {
+        code: 404,
+        success: false,
+        message: "Programare not found",
+      };
+    }
+
+    const bookingData = bookingDoc.data();
+
     await programareRef.delete();
+
+    const userUid = bookingData.user?.uid;
+    let userEmail = bookingData.user?.email || "";
+    let userData = null;
+
+    if (userUid) {
+      try {
+        const userDoc = await db.collection("users").doc(userUid).get();
+        if (userDoc.exists) {
+          userData = userDoc.data();
+          userEmail = userData.google?.email || userData.email || userEmail;
+        }
+      } catch (userError) {
+        console.warn("Unable to load user for cancellation email", userUid, userError);
+      }
+    }
+
+    try {
+      const { sendCancelledBookingEmail } = await import("./emailService.js");
+      await sendCancelledBookingEmail({
+        body: {
+          to: userEmail,
+          fullName: bookingData.user?.numeComplet || "",
+          room: bookingData.user?.camera || "",
+          machine: bookingData.machine,
+          date: dayjs(bookingData.date).format("DD/MM/YYYY"),
+          startTime: bookingData.start_interval_time,
+          endTime: bookingData.final_interval_time,
+          reason: "Anulat de utilizator",
+        },
+      });
+    } catch (emailError) {
+      console.error("Error sending cancellation email (user delete):", emailError);
+    }
+
+    getIO().emit("programare", { action: "delete", programareId: uid });
+
     return {
       code: 200,
       success: true,
@@ -509,6 +558,29 @@ const deleteProgramareWithReason = async (req, res) => {
 
     // Delete the booking
     await bookingRef.delete();
+
+    try {
+      const { sendDeletedBookingEmail } = await import("./emailService.js");
+      await sendDeletedBookingEmail({
+        body: {
+          to: userData?.google?.email || userData?.email || bookingData.user.email,
+          fullName: bookingData.user.numeComplet,
+          room: bookingData.user.camera,
+          machine: bookingData.machine,
+          date: dayjs(bookingData.date).format("DD/MM/YYYY"),
+          startTime: bookingData.start_interval_time,
+          duration: calculateDuration(
+            bookingData.start_interval_time,
+            bookingData.final_interval_time
+          ),
+          reason: reason || "Anulare administrativă",
+        },
+      });
+    } catch (emailError) {
+      console.error("Error sending admin deletion email:", emailError);
+    }
+
+    getIO().emit("programare", { action: "delete", programareId: bookingId });
 
     return {
       code: 200,

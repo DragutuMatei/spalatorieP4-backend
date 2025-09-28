@@ -1,4 +1,5 @@
 import { db } from "../utils/admin_fire.js";
+import { getIO } from "../utils/socket.js";
 import dayjs from "dayjs";
 
 // Add maintenance interval
@@ -29,19 +30,29 @@ const addMaintenanceInterval = async (req, res) => {
     if (!snapshot.empty) {
       snapshot.forEach((doc) => {
         const booking = doc.data();
-        const bookingDate = dayjs(booking.date, 'DD/MM/YYYY').format('DD/MM/YYYY');
-        
+
+        let bookingDateObj;
+        if (typeof booking.date === "string") {
+          bookingDateObj = booking.date.includes("/")
+            ? dayjs(booking.date, "DD/MM/YYYY")
+            : dayjs(booking.date);
+        } else {
+          bookingDateObj = dayjs(booking.date);
+        }
+
+        const bookingDate = bookingDateObj.format("DD/MM/YYYY");
+
         if (bookingDate === date) {
-          // Check if booking time overlaps with maintenance
-          const dateFormatted = dayjs(date, 'DD/MM/YYYY').format('YYYY-MM-DD');
+          const dateFormatted = bookingDateObj.format("YYYY-MM-DD");
           const bookingStart = dayjs(`${dateFormatted} ${booking.start_interval_time}`);
           const bookingEnd = dayjs(`${dateFormatted} ${booking.final_interval_time}`);
           const maintenanceStart = dayjs(`${dateFormatted} ${startTime}`);
           const maintenanceEnd = dayjs(`${dateFormatted} ${endTime}`);
-          
+
           if (bookingStart.isBefore(maintenanceEnd) && bookingEnd.isAfter(maintenanceStart)) {
             conflictingBookings.push({
               id: doc.id,
+              bookingDateObj,
               ...booking
             });
           }
@@ -49,15 +60,85 @@ const addMaintenanceInterval = async (req, res) => {
       });
     }
 
+    const cancelledBookings = [];
+
+    for (const booking of conflictingBookings) {
+      try {
+        const bookingRef = db.collection("programari").doc(booking.id);
+        const cancellationPayload = {
+          active: {
+            status: false,
+            message: "Anulat automat (mentenanță)",
+            cancelledAt: dayjs().valueOf(),
+            cancelledBy: "maintenance",
+          },
+        };
+
+        await bookingRef.update(cancellationPayload);
+
+        const updatedDoc = await bookingRef.get();
+        const updatedBooking = { uid: booking.id, ...updatedDoc.data() };
+        cancelledBookings.push(updatedBooking);
+
+        const userUid = updatedBooking.user?.uid;
+        let userEmail = updatedBooking.user?.email || "";
+        let userData = null;
+
+        if (userUid) {
+          try {
+            const userDoc = await db.collection("users").doc(userUid).get();
+            if (userDoc.exists) {
+              userData = userDoc.data();
+              userEmail = userData.google?.email || userData.email || userEmail;
+            }
+          } catch (userLoadError) {
+            console.warn("Unable to load user for maintenance cancellation", userUid, userLoadError);
+          }
+        }
+
+        const notificationData = {
+          userId: userUid,
+          type: "maintenance_cancelled",
+          message: `Programarea ta pentru ${updatedBooking.machine} din ${dayjs(updatedBooking.date).format("DD/MM/YYYY")} (${updatedBooking.start_interval_time} - ${updatedBooking.final_interval_time}) a fost anulată din cauza mentenanței programate.`,
+          date: updatedBooking.date,
+          machine: updatedBooking.machine,
+          startTime: updatedBooking.start_interval_time,
+          endTime: updatedBooking.final_interval_time,
+          duration:
+            updatedBooking.duration ||
+            calculateDuration(
+              updatedBooking.start_interval_time,
+              updatedBooking.final_interval_time
+            ),
+          reason: "Mentenanță programată",
+          createdAt: dayjs().valueOf(),
+          read: false,
+          userDetails: {
+            numeComplet: updatedBooking.user?.numeComplet || "",
+            camera: updatedBooking.user?.camera || "",
+            email: userEmail,
+          },
+        };
+
+        await db.collection("notifications").add(notificationData);
+
+        getIO().emit("programare", { action: "update", programare: updatedBooking });
+      } catch (cancelError) {
+        console.error("Failed to cancel booking during maintenance:", cancelError);
+      }
+    }
+
     return {
       code: 200,
       success: true,
-      message: "Maintenance interval added successfully",
+      message: cancelledBookings.length
+        ? "Maintenance interval added and conflicting bookings cancelled"
+        : "Maintenance interval added successfully",
       maintenance: {
         id: maintenanceRef.id,
-        ...maintenanceData
+        ...maintenanceData,
       },
-      conflictingBookings
+      cancelledBookings,
     };
   } catch (error) {
     console.error("Error adding maintenance interval:", error);
