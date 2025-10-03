@@ -8,7 +8,6 @@ const app = express();
 import userRoutes from "./src/routes/userRoutes.js";
 import programariRoutes from "./src/routes/programariRoutes.js";
 import maintenanceRoutes from "./src/routes/maintenanceRoutes.js";
-import notificationRoutes from "./src/routes/notificationRoutes.js";
 import emailRoutes from "./src/routes/emailRoutes.js";
 
 import { createServer } from "http";
@@ -19,6 +18,7 @@ import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
 import { startWeeklyProgramariCleanup } from "./src/services/cleanup.js";
+import notificationRoutes from "./src/routes/notificationRoutes.js";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -42,7 +42,7 @@ app.use(helmet());
 const allowedOrigins = [
   "http://localhost:3002",
   "http://localhost:3000",
-  "http://localhost:3003",
+  "https://develop.spalatoriep4.osfiir.ro",
   "https://spalatoriep4.osfiir.ro",
 ];
 app.use(
@@ -97,6 +97,7 @@ setIO(io);
 
 // Stocare in-memory pentru rezervările temporare (în producție, folosește Redis sau o bază de date)
 const tempReservations = new Map();
+const dryerLiveSelections = new Map();
 
 // Funcție pentru curățarea rezervărilor expirate (opțional)
 const cleanExpiredReservations = () => {
@@ -221,6 +222,11 @@ io.on("connection", (socket) => {
     socket.emit("syncTempReservations", {
       tempReservations: reservationsObject,
     });
+
+    const dryerSelectionsObject = Object.fromEntries(dryerLiveSelections);
+    socket.emit("syncDryerSelection", {
+      dryerSelections: dryerSelectionsObject,
+    });
   });
 
   // Când cineva solicită sincronizarea rezervărilor temporare
@@ -228,6 +234,13 @@ io.on("connection", (socket) => {
     const reservationsObject = Object.fromEntries(tempReservations);
     socket.emit("syncTempReservations", {
       tempReservations: reservationsObject,
+    });
+  });
+
+  socket.on("requestDryerSelectionSync", () => {
+    const dryerSelectionsObject = Object.fromEntries(dryerLiveSelections);
+    socket.emit("syncDryerSelection", {
+      dryerSelections: dryerSelectionsObject,
     });
   });
 
@@ -266,6 +279,27 @@ io.on("connection", (socket) => {
     }
   });
 
+  socket.on("dryerSelection", (data) => {
+    if (!data?.userId || !data.selection) {
+      return;
+    }
+
+    dryerLiveSelections.set(data.userId, data.selection);
+    socket.broadcast.emit("dryerSelection", data);
+  });
+
+  socket.on("cancelDryerSelection", (data) => {
+    if (!data?.userId) {
+      return;
+    }
+
+    if (dryerLiveSelections.has(data.userId)) {
+      dryerLiveSelections.delete(data.userId);
+    }
+
+    socket.broadcast.emit("cancelDryerSelection", data);
+  });
+
   // Când utilizatorul se deconectează
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
@@ -299,6 +333,11 @@ io.on("connection", (socket) => {
           `Temp reservation removed after final booking for user: ${userId}`
         );
       }
+
+      if (dryerLiveSelections.has(userId)) {
+        dryerLiveSelections.delete(userId);
+        io.emit("cancelDryerSelection", { userId });
+      }
     }
 
     // Broadcast către toți clienții
@@ -313,6 +352,10 @@ const logCurrentReservations = () => {
     console.log(
       `- User ${userId}: ${reservation.machine} on ${reservation.date}`
     );
+  }
+  console.log("Current dryer selections:", dryerLiveSelections.size);
+  for (const [userId, selection] of dryerLiveSelections.entries()) {
+    console.log(`- Dryer selection ${userId}:`, selection);
   }
 };
 

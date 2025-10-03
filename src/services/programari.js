@@ -1,9 +1,5 @@
-import {
-  getCollection,
-  getCollectionWithScope,
-} from "../utils/collections.js";
+import { getCollection } from "../utils/collections.js";
 import { getIO } from "../utils/socket.js";
-import { sendBookingConfirmationEmail } from "./emailService.js";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
@@ -15,6 +11,7 @@ dayjs.extend(timezone);
 dayjs.extend(customParseFormat);
 
 const BUCURESTI_TZ = "Europe/Bucharest";
+const DRYER_MACHINE = "Uscator";
 
 const toBucharestDayjs = (value) => {
   if (value === undefined || value === null) {
@@ -74,6 +71,14 @@ const saveProgramare = async (req, res) => {
   console.log("Date format received:", programareData.date);
 
   try {
+    if (!programareData?.machine) {
+      return {
+        code: 400,
+        success: false,
+        message: "Tipul mașinii este obligatoriu pentru programare.",
+      };
+    }
+
     if (programareData?.user) {
       const userUid = programareData.user.uid;
       if (userUid) {
@@ -93,6 +98,54 @@ const saveProgramare = async (req, res) => {
           console.warn("Unable to enrich programare user data:", lookupError);
         }
       }
+    }
+
+    const isDryerBooking = programareData.machine === DRYER_MACHINE;
+
+    if (isDryerBooking) {
+      const durationMinutes = Number(programareData.durationMinutes);
+      if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) {
+        return {
+          code: 400,
+          success: false,
+          message: "Durata pentru uscător trebuie să fie un număr pozitiv.",
+        };
+      }
+
+      const startTimeBucharest = programareData.startTimestamp
+        ? toBucharestDayjs(programareData.startTimestamp)
+        : toBucharestDayjs(
+            `${programareData.date} ${programareData.start_interval_time}`
+          );
+
+      if (!startTimeBucharest.isValid()) {
+        return {
+          code: 400,
+          success: false,
+          message: "Data pentru uscător nu este validă.",
+        };
+      }
+
+      const endTimeBucharest = startTimeBucharest.add(durationMinutes, "minute");
+
+      programareData.date = startTimeBucharest.format("DD/MM/YYYY");
+      programareData.start_interval_time = startTimeBucharest.format("HH:mm");
+      programareData.final_interval_time = endTimeBucharest.format("HH:mm");
+      programareData.startsAt = startTimeBucharest.valueOf();
+      programareData.endsAt = endTimeBucharest.valueOf();
+      programareData.duration = durationMinutes;
+      programareData.active =
+        programareData.active ||
+        {
+          status: true,
+          message: "Program uscător activ",
+          startedAt: new Date(),
+        };
+    } else {
+      programareData.duration = calculateDuration(
+        programareData.start_interval_time,
+        programareData.final_interval_time
+      );
     }
 
     // Verificăm dacă există conflict de programare
@@ -117,36 +170,6 @@ const saveProgramare = async (req, res) => {
     const content = await proRef.get();
     const data = { ...content.data(), uid: proRef.id };
     console.log(data);
-
-    // Trimitem email de confirmare
-    try {
-      // Normalizăm data pentru email
-      let normalizedDate = formatBucharestDate(programareData.date);
-      if (!normalizedDate) {
-        normalizedDate = formatBucharestDate(dayjs().tz(BUCURESTI_TZ));
-      }
-
-      const emailData = {
-        to: programareData.user.google?.email || programareData.user.email,
-        fullName: programareData.user.numeComplet,
-        room: programareData.user.camera,
-        machine: programareData.machine,
-        date: normalizedDate,
-        startTime: programareData.start_interval_time,
-        duration: calculateDuration(
-          programareData.start_interval_time,
-          programareData.final_interval_time
-        ),
-      };
-
-      console.log("Email data being sent:", emailData);
-
-      await sendBookingConfirmationEmail(emailData);
-      console.log("Booking confirmation email sent successfully");
-    } catch (emailError) {
-      console.error("Error sending booking confirmation email:", emailError);
-      // Nu oprim procesul dacă email-ul nu se trimite
-    }
 
     return {
       code: 200,
@@ -229,32 +252,64 @@ const checkForConflicts = async (date, startTime, endTime, machine) => {
     }
 
     const conflicts = [];
+    const updates = [];
+    const now = dayjs().tz(BUCURESTI_TZ).valueOf();
 
-    snapshot.forEach((doc) => {
-      const programare = doc.data();
-      const programareDate = formatBucharestDate(programare.date);
+    await Promise.all(
+      snapshot.docs.map(async (doc) => {
+        const programare = doc.data();
 
-      // Verificăm doar programările din aceeași zi
-      if (programareDate === targetDate) {
-        // Verificăm dacă intervalele se suprapun
-        const hasTimeConflict = checkTimeOverlap(
-          startTime,
-          endTime,
-          programare.start_interval_time,
-          programare.final_interval_time
-        );
-
-        if (hasTimeConflict) {
-          conflicts.push({
-            uid: doc.id,
-            user: programare.user.numeComplet,
-            camera: programare.user.camera,
-            start_time: programare.start_interval_time,
-            end_time: programare.final_interval_time,
-          });
+        if (
+          machine === DRYER_MACHINE &&
+          programare.active?.status &&
+          typeof programare.endsAt === "number" &&
+          programare.endsAt <= now
+        ) {
+          updates.push(
+            doc.ref.update({
+              active: {
+                status: false,
+                message: "Program uscător finalizat automat",
+                expiredAt: new Date(),
+              },
+            })
+          );
+          return;
         }
+
+        const programareDate = formatBucharestDate(programare.date);
+
+        if (programareDate === targetDate) {
+          const hasTimeConflict = checkTimeOverlap(
+            startTime,
+            endTime,
+            programare.start_interval_time,
+            programare.final_interval_time
+          );
+
+          if (hasTimeConflict) {
+            conflicts.push({
+              uid: doc.id,
+              user: programare.user.numeComplet,
+              camera: programare.user.camera,
+              start_time: programare.start_interval_time,
+              end_time: programare.final_interval_time,
+            });
+          }
+        }
+      })
+    );
+
+    if (updates.length) {
+      try {
+        await Promise.all(updates);
+      } catch (error) {
+        console.warn(
+          "Failed to auto-expire dryer bookings during conflict check",
+          error
+        );
       }
-    });
+    }
 
     return {
       hasConflict: conflicts.length > 0,
@@ -299,10 +354,61 @@ const getAllProgramari = async (req, res) => {
     const programari = [];
     const userCache = {};
 
+    const nowValue = dayjs().tz(BUCURESTI_TZ).valueOf();
+
     for (const doc of snapshot.docs) {
       const data = doc.data();
 
       if (data.active && data.active.status === true) {
+        if (data.machine === DRYER_MACHINE) {
+          let endsAtMillis = Number.isFinite(data.endsAt) ? data.endsAt : null;
+          if (!Number.isFinite(endsAtMillis) && Number.isFinite(data.endTimestamp)) {
+            endsAtMillis = data.endTimestamp;
+          }
+
+          if (!Number.isFinite(endsAtMillis)) {
+            const bookingDate = formatBucharestDate(data.date);
+            if (bookingDate) {
+              const endCandidate = dayjs.tz(
+                `${bookingDate} ${data.final_interval_time}`,
+                "DD/MM/YYYY HH:mm",
+                BUCURESTI_TZ
+              );
+              if (endCandidate.isValid()) {
+                endsAtMillis = endCandidate.valueOf();
+              }
+            }
+          }
+
+          if (Number.isFinite(endsAtMillis) && endsAtMillis <= nowValue) {
+            const updatedActiveState = {
+              status: false,
+              message: "Program uscător finalizat automat",
+              expiredAt: new Date(),
+            };
+
+            try {
+              await doc.ref.update({ active: updatedActiveState });
+              const expiredProgramare = {
+                uid: doc.id,
+                ...data,
+                active: updatedActiveState,
+              };
+              getIO().emit("programare", {
+                action: "update",
+                programare: expiredProgramare,
+              });
+            } catch (updateError) {
+              console.error(
+                "Failed to auto-expire dryer booking",
+                doc.id,
+                updateError
+              );
+            }
+            continue;
+          }
+        }
+
         const bookingUser = data.user || {};
         const userUid = bookingUser.uid;
 
@@ -454,32 +560,68 @@ const checkForConflictsExcluding = async (
     }
 
     const conflicts = [];
+    const updates = [];
+    const now = dayjs().tz(BUCURESTI_TZ).valueOf();
 
-    snapshot.forEach((doc) => {
-      if (doc.id === excludeId) return;
-
-      const programare = doc.data();
-      const programareDate = formatBucharestDate(programare.date);
-
-      if (programareDate === targetDate) {
-        const hasTimeConflict = checkTimeOverlap(
-          startTime,
-          endTime,
-          programare.start_interval_time,
-          programare.final_interval_time
-        );
-
-        if (hasTimeConflict) {
-          conflicts.push({
-            uid: doc.id,
-            user: programare.user.numeComplet,
-            camera: programare.user.camera,
-            start_time: programare.start_interval_time,
-            end_time: programare.final_interval_time,
-          });
+    await Promise.all(
+      snapshot.docs.map(async (doc) => {
+        if (doc.id === excludeId) {
+          return;
         }
+
+        const programare = doc.data();
+
+        if (
+          machine === DRYER_MACHINE &&
+          programare.active?.status &&
+          typeof programare.endsAt === "number" &&
+          programare.endsAt <= now
+        ) {
+          updates.push(
+            doc.ref.update({
+              active: {
+                status: false,
+                message: "Program uscător finalizat automat",
+                expiredAt: new Date(),
+              },
+            })
+          );
+          return;
+        }
+
+        const programareDate = formatBucharestDate(programare.date);
+
+        if (programareDate === targetDate) {
+          const hasTimeConflict = checkTimeOverlap(
+            startTime,
+            endTime,
+            programare.start_interval_time,
+            programare.final_interval_time
+          );
+
+          if (hasTimeConflict) {
+            conflicts.push({
+              uid: doc.id,
+              user: programare.user.numeComplet,
+              camera: programare.user.camera,
+              start_time: programare.start_interval_time,
+              end_time: programare.final_interval_time,
+            });
+          }
+        }
+      })
+    );
+
+    if (updates.length) {
+      try {
+        await Promise.all(updates);
+      } catch (error) {
+        console.warn(
+          "Failed to auto-expire dryer bookings during conflict exclusion check",
+          error
+        );
       }
-    });
+    }
 
     return {
       hasConflict: conflicts.length > 0,

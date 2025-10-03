@@ -3,10 +3,30 @@ import { db } from "./admin_fire.js";
 
 const LOCAL_SUFFIX = "_local";
 
-const strIncludesLocalhost = (value = "") => {
-  if (!value) return false;
-  const normalized = value.toLowerCase();
-  return normalized.includes("localhost") || normalized.includes("127.0.0.1");
+const DEV_ORIGINS = [
+  "localhost",
+  "127.0.0.1",
+  "https://develop.spalatoriep4.osfiir.ro",
+];
+const PROD_ORIGIN = "https://spalatoriep4.osfiir.ro";
+
+const normalizeOrigins = (value = "") => {
+  if (!value || typeof value !== "string") {
+    return [];
+  }
+
+  return value
+    .split(/[\s,]+/)
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean);
+};
+
+const originMatchesAny = (origin, targets = []) => {
+  if (!origin) return false;
+  return targets.some((target) => {
+    if (!target) return false;
+    return origin === target || origin.endsWith(target);
+  });
 };
 
 const computeShouldUseLocal = () => {
@@ -22,16 +42,27 @@ const computeShouldUseLocal = () => {
     return true;
   }
 
-  const originCandidates = [
+  const originCandidatesRaw = [
     process.env.SERVER_ORIGIN,
     process.env.APP_ORIGIN,
     process.env.API_BASE_URL,
     process.env.HOST,
     process.env.HOSTNAME,
     process.env.ALLOWED_ORIGINS,
+    process.env.REQUEST_ORIGIN,
   ].filter(Boolean);
 
-  if (originCandidates.some(strIncludesLocalhost)) {
+  const originCandidates = originCandidatesRaw.flatMap(normalizeOrigins);
+
+  if (originCandidates.some((origin) => originMatchesAny(origin, DEV_ORIGINS))) {
+    return true;
+  }
+
+  if (originCandidates.some((origin) => origin === PROD_ORIGIN)) {
+    return false;
+  }
+
+  if (originCandidates.some((origin) => origin.includes("localhost"))) {
     return true;
   }
 
