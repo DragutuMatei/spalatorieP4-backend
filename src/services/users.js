@@ -34,6 +34,8 @@ const saveUser = async (req, res) => {
 
     await userRef.set(dataToSave, { merge: true });
     const savedDoc = await userRef.get();
+    const savedData = savedDoc.data();
+    const userPayload = { uid: savedDoc.id, ...savedData };
 
     const programariRef = getCollection("programari")
       .where("user.uid", "==", uid);
@@ -49,11 +51,11 @@ const saveUser = async (req, res) => {
         const a = await proRef.set(
           {
             user: {
-              numeComplet: savedDoc.data().numeComplet,
-              camera: savedDoc.data().camera,
+              numeComplet: savedData.numeComplet,
+              camera: savedData.camera,
               uid: savedDoc.id,
-              email: savedDoc.data().google.email,
-              telefon: savedDoc.data().telefon || "",
+              email: savedData.google?.email,
+              telefon: savedData.telefon || "",
             },
           },
           { merge: true }
@@ -71,7 +73,7 @@ const saveUser = async (req, res) => {
       code: 200,
       success: true,
       message: "User saved successfully",
-      user: savedDoc.data(),
+      user: userPayload,
       requiresReapproval,
     };
   } catch (error) {
