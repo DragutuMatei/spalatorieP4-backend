@@ -1,11 +1,11 @@
-import { db } from "../utils/admin_fire.js";
+import { getCollection } from "../utils/collections.js";
 
 // Get notifications for a user
 const getUserNotifications = async (req, res) => {
   const { userId } = req.params;
 
   try {
-    const notificationsRef = db.collection("notifications")
+    const notificationsRef = getCollection("notifications")
       .where("userId", "==", userId)
       .orderBy("createdAt", "desc");
     
@@ -48,7 +48,7 @@ const getUserNotifications = async (req, res) => {
 // Get all notifications (admin only)
 const getAllNotifications = async (req, res) => {
   try {
-    const notificationsRef = db.collection("notifications")
+    const notificationsRef = getCollection("notifications")
       .orderBy("createdAt", "desc");
     
     const snapshot = await notificationsRef.get();
@@ -87,49 +87,49 @@ const getAllNotifications = async (req, res) => {
   }
 };
 
-// Mark notification as read
-const markNotificationAsRead = async (req, res) => {
-  const { notificationId } = req.params;
+// // Mark notification as read
+// const markNotificationAsRead = async (req, res) => {
+//   const { notificationId } = req.params;
 
-  try {
-    const notificationRef = db.collection("notifications").doc(notificationId);
-    const notificationDoc = await notificationRef.get();
+//   try {
+//     const notificationRef = getCollection("notifications").doc(notificationId);
+//     const notificationDoc = await notificationRef.get();
     
-    if (!notificationDoc.exists) {
-      return {
-        code: 404,
-        success: false,
-        message: "Notification not found",
-      };
-    }
+//     if (!notificationDoc.exists) {
+//       return {
+//         code: 404,
+//         success: false,
+//         message: "Notification not found",
+//       };
+//     }
     
-    await notificationRef.update({ 
-      read: true,
-      readAt: new Date()
-    });
+//     await notificationRef.update({ 
+//       read: true,
+//       readAt: new Date()
+//     });
     
-    return {
-      code: 200,
-      success: true,
-      message: "Notification marked as read",
-    };
-  } catch (error) {
-    console.error("Error marking notification as read:", error);
-    return {
-      code: 500,
-      success: false,
-      message: "Error marking notification as read",
-      error: error.message,
-    };
-  }
-};
+//     return {
+//       code: 200,
+//       success: true,
+//       message: "Notification marked as read",
+//     };
+//   } catch (error) {
+//     console.error("Error marking notification as read:", error);
+//     return {
+//       code: 500,
+//       success: false,
+//       message: "Error marking notification as read",
+//       error: error.message,
+//     };
+//   }
+// };
 
 // Delete notification
 const deleteNotification = async (req, res) => {
   const { notificationId } = req.params;
 
   try {
-    const notificationRef = db.collection("notifications").doc(notificationId);
+    const notificationRef = getCollection("notifications").doc(notificationId);
     const notificationDoc = await notificationRef.get();
     
     if (!notificationDoc.exists) {
@@ -161,6 +161,6 @@ const deleteNotification = async (req, res) => {
 export {
   getUserNotifications,
   getAllNotifications,
-  markNotificationAsRead,
+  // markNotificationAsRead,
   deleteNotification
 };

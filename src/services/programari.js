@@ -1,10 +1,14 @@
-import { db } from "../utils/admin_fire.js";
+import {
+  getCollection,
+  getCollectionWithScope,
+} from "../utils/collections.js";
 import { getIO } from "../utils/socket.js";
 import { sendBookingConfirmationEmail } from "./emailService.js";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
 import customParseFormat from "dayjs/plugin/customParseFormat.js";
+import { deleteProgramariOlderThanThreeDays } from "./cleanup.js";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -27,7 +31,9 @@ const toBucharestDayjs = (value) => {
 
   if (typeof value === "object") {
     if (value.seconds !== undefined && value.nanoseconds !== undefined) {
-      return dayjs.unix(value.seconds + value.nanoseconds / 1_000_000_000).tz(BUCURESTI_TZ);
+      return dayjs
+        .unix(value.seconds + value.nanoseconds / 1_000_000_000)
+        .tz(BUCURESTI_TZ);
     }
 
     if (value._seconds !== undefined && value._nanoseconds !== undefined) {
@@ -72,7 +78,7 @@ const saveProgramare = async (req, res) => {
       const userUid = programareData.user.uid;
       if (userUid) {
         try {
-          const userDoc = await db.collection("users").doc(userUid).get();
+          const userDoc = await getCollection("users").doc(userUid).get();
           if (userDoc.exists) {
             const userData = userDoc.data();
             if (!programareData.user.telefon && userData.telefon) {
@@ -107,7 +113,7 @@ const saveProgramare = async (req, res) => {
       };
     }
 
-    const proRef = await db.collection("programari").add(programareData);
+    const proRef = await getCollection("programari").add(programareData);
     const content = await proRef.get();
     const data = { ...content.data(), uid: proRef.id };
     console.log(data);
@@ -163,9 +169,11 @@ const getProgramareByUserUid = async (req, res) => {
   const { uid } = req.params;
 
   try {
-    const programariRef = db
-      .collection("programari")
-      .where("user.uid", "==", uid);
+    const programariRef = getCollection("programari").where(
+      "user.uid",
+      "==",
+      uid
+    );
     const snapshot = await programariRef.get();
 
     if (snapshot.empty) {
@@ -210,8 +218,7 @@ const checkForConflicts = async (date, startTime, endTime, machine) => {
     const targetDate = formatBucharestDate(date);
 
     // Query pentru programările din aceeași zi
-    const programariRef = db
-      .collection("programari")
+    const programariRef = getCollection("programari")
       .where("active.status", "==", true)
       .where("machine", "==", machine);
 
@@ -279,7 +286,7 @@ const checkTimeOverlap = (start1, end1, start2, end2) => {
 
 const getAllProgramari = async (req, res) => {
   try {
-    const programareRef = db.collection("programari");
+    const programareRef = getCollection("programari");
     const snapshot = await programareRef.get();
     if (snapshot.empty) {
       return {
@@ -302,7 +309,7 @@ const getAllProgramari = async (req, res) => {
         if (userUid && (!bookingUser.telefon || !bookingUser.email)) {
           if (!userCache[userUid]) {
             try {
-              const userDoc = await db.collection("users").doc(userUid).get();
+              const userDoc = await getCollection("users").doc(userUid).get();
               userCache[userUid] = userDoc.exists ? userDoc.data() : null;
             } catch (lookupError) {
               console.warn(
@@ -353,7 +360,7 @@ const updateProgramare = async (req, res) => {
   const { programareId, updatedData } = req.body;
 
   try {
-    const programareRef = db.collection("programari").doc(programareId);
+    const programareRef = getCollection("programari").doc(programareId);
     const existingDoc = await programareRef.get();
 
     if (!existingDoc.exists) {
@@ -436,8 +443,7 @@ const checkForConflictsExcluding = async (
   try {
     const targetDate = formatBucharestDate(date);
 
-    const programariRef = db
-      .collection("programari")
+    const programariRef = getCollection("programari")
       .where("active.status", "==", true)
       .where("machine", "==", machine);
 
@@ -489,7 +495,7 @@ const deleteProgramare = async (req, res) => {
   const { uid } = req.params;
 
   try {
-    const programareRef = db.collection("programari").doc(uid);
+    const programareRef = getCollection("programari").doc(uid);
     const bookingDoc = await programareRef.get();
 
     if (!bookingDoc.exists) {
@@ -510,13 +516,17 @@ const deleteProgramare = async (req, res) => {
 
     if (userUid) {
       try {
-        const userDoc = await db.collection("users").doc(userUid).get();
+        const userDoc = await getCollection("users").doc(userUid).get();
         if (userDoc.exists) {
           userData = userDoc.data();
           userEmail = userData.google?.email || userData.email || userEmail;
         }
       } catch (userError) {
-        console.warn("Unable to load user for cancellation email", userUid, userError);
+        console.warn(
+          "Unable to load user for cancellation email",
+          userUid,
+          userError
+        );
       }
     }
 
@@ -535,7 +545,10 @@ const deleteProgramare = async (req, res) => {
         },
       });
     } catch (emailError) {
-      console.error("Error sending cancellation email (user delete):", emailError);
+      console.error(
+        "Error sending cancellation email (user delete):",
+        emailError
+      );
     }
 
     getIO().emit("programare", { action: "delete", programareId: uid });
@@ -562,7 +575,7 @@ const deleteProgramareWithReason = async (req, res) => {
 
   try {
     // Get booking details
-    const bookingRef = db.collection("programari").doc(bookingId);
+    const bookingRef = getCollection("programari").doc(bookingId);
     const bookingDoc = await bookingRef.get();
 
     if (!bookingDoc.exists) {
@@ -576,7 +589,7 @@ const deleteProgramareWithReason = async (req, res) => {
     const bookingData = bookingDoc.data();
 
     // Get user details
-    const userRef = db.collection("users").doc(bookingData.user.uid);
+    const userRef = getCollection("users").doc(bookingData.user.uid);
     const userDoc = await userRef.get();
 
     if (!userDoc.exists) {
@@ -588,7 +601,7 @@ const deleteProgramareWithReason = async (req, res) => {
     const userData = userDoc.exists ? userDoc.data() : null;
 
     // Create notification
-    await db.collection("notifications").add({
+    await getCollection("notifications").add({
       userId: bookingData.user.uid,
       date: bookingData.date,
       machine: bookingData.machine,
@@ -617,7 +630,10 @@ const deleteProgramareWithReason = async (req, res) => {
       const { sendDeletedBookingEmail } = await import("./emailService.js");
       await sendDeletedBookingEmail({
         body: {
-          to: userData?.google?.email || userData?.email || bookingData.user.email,
+          to:
+            userData?.google?.email ||
+            userData?.email ||
+            bookingData.user.email,
           fullName: bookingData.user.numeComplet,
           room: bookingData.user.camera,
           machine: bookingData.machine,
@@ -674,7 +690,7 @@ const getFilteredBookings = async (req, res) => {
   const { searchTerm, showActiveOnly } = req.query;
 
   try {
-    const programariRef = db.collection("programari");
+    const programariRef = getCollection("programari");
     const snapshot = await programariRef.get();
 
     if (snapshot.empty) {
@@ -751,7 +767,7 @@ const cancelProgramareWithReason = async (req, res) => {
 
   try {
     // Get booking details
-    const bookingRef = db.collection("programari").doc(bookingId);
+    const bookingRef = getCollection("programari").doc(bookingId);
     const bookingDoc = await bookingRef.get();
 
     if (!bookingDoc.exists) {
@@ -777,7 +793,7 @@ const cancelProgramareWithReason = async (req, res) => {
     await bookingRef.update(updatedData);
 
     // Get user details
-    const userRef = db.collection("users").doc(bookingData.user.uid);
+    const userRef = getCollection("users").doc(bookingData.user.uid);
     const userDoc = await userRef.get();
 
     const userData = userDoc.exists ? userDoc.data() : null;
@@ -786,11 +802,11 @@ const cancelProgramareWithReason = async (req, res) => {
     const notificationData = {
       userId: bookingData.user.uid,
       type: "booking_cancelled",
-      message: `Programarea ta pentru ${bookingData.machine} din data ${formatBucharestDate(
-        bookingData.date
-      )} (${bookingData.start_interval_time} - ${
-        bookingData.final_interval_time
-      }) a fost anulată. Motiv: ${reason}`,
+      message: `Programarea ta pentru ${
+        bookingData.machine
+      } din data ${formatBucharestDate(bookingData.date)} (${
+        bookingData.start_interval_time
+      } - ${bookingData.final_interval_time}) a fost anulată. Motiv: ${reason}`,
       date: bookingData.date,
       machine: bookingData.machine,
       startTime: bookingData.start_interval_time,
@@ -803,7 +819,6 @@ const cancelProgramareWithReason = async (req, res) => {
         ),
       reason: reason,
       createdAt: new Date(),
-      read: false,
       userDetails: {
         numeComplet: bookingData.user.numeComplet,
         camera: bookingData.user.camera,
@@ -812,9 +827,9 @@ const cancelProgramareWithReason = async (req, res) => {
       },
     };
 
-    const notificationRef = await db
-      .collection("notifications")
-      .add(notificationData);
+    const notificationRef = await getCollection("notifications").add(
+      notificationData
+    );
     const notification = {
       uid: notificationRef.id,
       ...notificationData,
@@ -883,6 +898,40 @@ const cancelProgramareWithReason = async (req, res) => {
   }
 };
 
+const runManualCleanup = async (req, res) => {
+  const scope = req.body?.scope || "auto";
+
+  try {
+    if (!["official", "local", "auto", "remote"].includes(scope)) {
+      return {
+        code: 400,
+        success: false,
+        message: "Scope invalid. Folosește official sau local.",
+      };
+    }
+
+    const { deletedCount, deletedNotifications } =
+      await deleteProgramariOlderThanThreeDays(scope);
+
+    return {
+      code: 200,
+      success: true,
+      message: `Ștergere manuală completă pentru scope=${scope}.`,
+      deletedProgramari: deletedCount,
+      deletedNotifications,
+      scope,
+    };
+  } catch (error) {
+    console.error("[Cleanup] Manual run failed:", error);
+    return {
+      code: 500,
+      success: false,
+      message: "Curățarea manuală a eșuat.",
+      error: error.message,
+    };
+  }
+};
+
 export {
   saveProgramare,
   getAllProgramari,
@@ -892,4 +941,5 @@ export {
   deleteProgramareWithReason,
   cancelProgramareWithReason,
   getFilteredBookings,
+  runManualCleanup,
 };

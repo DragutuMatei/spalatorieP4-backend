@@ -1,11 +1,11 @@
-import { db } from "../utils/admin_fire.js";
+import { getCollection } from "../utils/collections.js";
 import { getIO } from "../utils/socket.js";
 
 const saveUser = async (req, res) => {
   const { uid, userData } = req.body;
 
   try {
-    const userRef = db.collection("users").doc(uid);
+    const userRef = getCollection("users").doc(uid);
 
     const existingUserDoc = await userRef.get();
     if (existingUserDoc.exists && req?.body?.preventOverwrite) {
@@ -35,8 +35,7 @@ const saveUser = async (req, res) => {
     await userRef.set(dataToSave, { merge: true });
     const savedDoc = await userRef.get();
 
-    const programariRef = db
-      .collection("programari")
+    const programariRef = getCollection("programari")
       .where("user.uid", "==", uid);
     const snapshot = await programariRef.get();
     if (!snapshot.empty) {
@@ -46,7 +45,7 @@ const saveUser = async (req, res) => {
       });
       for (let i = 0; i < programari.length; i++) {
         console.log(programari[i]);
-        const proRef = db.collection("programari").doc(programari[i].uid);
+        const proRef = getCollection("programari").doc(programari[i].uid);
         const a = await proRef.set(
           {
             user: {
@@ -89,7 +88,7 @@ const saveUser = async (req, res) => {
 const getUser = async (req, res) => {
   const { uid } = req.params;
   try {
-    const userRef = db.collection("users").doc(uid);
+    const userRef = getCollection("users").doc(uid);
     const doc = await userRef.get();
     if (!doc.exists) {
       return { code: 404, success: false, message: "User not found" };
@@ -112,7 +111,7 @@ const getUser = async (req, res) => {
 // Get all users (admin only)
 const getAllUsers = async (req, res) => {
   try {
-    const usersRef = db.collection("users");
+    const usersRef = getCollection("users");
     const snapshot = await usersRef.get();
 
     if (snapshot.empty) {
@@ -169,7 +168,7 @@ const toggleUserApproval = async (req, res) => {
   const { userId, validate } = req.body;
 
   try {
-    const userRef = db.collection("users").doc(userId);
+    const userRef = getCollection("users").doc(userId);
     const userDoc = await userRef.get();
 
     if (!userDoc.exists) {
@@ -217,7 +216,7 @@ const toggleUserRole = async (req, res) => {
       };
     }
 
-    const userRef = db.collection("users").doc(userId);
+    const userRef = getCollection("users").doc(userId);
     const userDoc = await userRef.get();
 
     if (!userDoc.exists) {

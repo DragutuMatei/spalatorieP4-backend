@@ -18,6 +18,7 @@ import settingsRouter from "./src/routes/settingsRoutes.js";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
+import { startWeeklyProgramariCleanup } from "./src/services/cleanup.js";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -176,7 +177,9 @@ END:VCALENDAR`;
     res.setHeader("Content-Type", "text/calendar");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="rezervare-${machine}-${startLocal.format("YYYY-MM-DD")}.ics"`
+      `attachment; filename="rezervare-${machine}-${startLocal.format(
+        "YYYY-MM-DD"
+      )}.ics"`
     );
     res.send(icsContent);
   } catch (error) {
@@ -317,4 +320,5 @@ const logCurrentReservations = () => {
 setInterval(logCurrentReservations, 5 * 60 * 1000);
 httpServer.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  startWeeklyProgramariCleanup();
 });
