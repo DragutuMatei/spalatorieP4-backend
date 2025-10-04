@@ -311,9 +311,47 @@ const checkForConflicts = async (date, startTime, endTime, machine) => {
       }
     }
 
+    let maintenanceConflicts = [];
+
+    if (machine === DRYER_MACHINE) {
+      const maintenanceRef = getCollection("maintenance")
+        .where("machine", "==", DRYER_MACHINE)
+        .where("date", "==", targetDate);
+
+      const maintenanceSnapshot = await maintenanceRef.get();
+
+      if (!maintenanceSnapshot.empty) {
+        const requestedStartMinutes = parseTimeToMinutes(startTime);
+        const requestedEndMinutes = parseTimeToMinutes(endTime);
+
+        maintenanceSnapshot.forEach((doc) => {
+          const maintenance = doc.data();
+          const maintenanceStartMinutes = parseTimeToMinutes(
+            maintenance.startTime || maintenance.start_interval_time
+          );
+          const maintenanceEndMinutes = parseTimeToMinutes(
+            maintenance.endTime || maintenance.final_interval_time
+          );
+
+          const overlapsMaintenance =
+            requestedStartMinutes < maintenanceEndMinutes &&
+            requestedEndMinutes > maintenanceStartMinutes;
+
+          if (overlapsMaintenance) {
+            maintenanceConflicts.push({
+              maintenanceId: doc.id,
+              maintenance,
+            });
+          }
+        });
+      }
+    }
+
     return {
-      hasConflict: conflicts.length > 0,
+      hasConflict:
+        conflicts.length > 0 || maintenanceConflicts.length > 0,
       conflicts: conflicts,
+      maintenanceConflicts,
     };
   } catch (error) {
     console.log("Error checking for conflicts:", error);
