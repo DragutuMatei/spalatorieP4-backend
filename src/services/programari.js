@@ -67,9 +67,6 @@ const formatBucharestDate = (value, formatStr = "DD/MM/YYYY") => {
 const saveProgramare = async (req, res) => {
   const { programareData } = req.body;
 
-  console.log("Received programareData:", programareData);
-  console.log("Date format received:", programareData.date);
-
   try {
     if (!programareData?.machine) {
       return {
@@ -169,7 +166,6 @@ const saveProgramare = async (req, res) => {
     const proRef = await getCollection("programari").add(programareData);
     const content = await proRef.get();
     const data = { ...content.data(), uid: proRef.id };
-    console.log(data);
 
     return {
       code: 200,
@@ -178,7 +174,7 @@ const saveProgramare = async (req, res) => {
       programare: data,
     };
   } catch (error) {
-    console.log("Error saving programare:", error);
+    console.error("Error saving programare:", error);
     return {
       code: 500,
       success: false,
@@ -225,7 +221,7 @@ const getProgramareByUserUid = async (req, res) => {
       message: "Programari found for this user",
     };
   } catch (error) {
-    console.log("Error fetching programari by user:", error);
+    console.error("Error fetching programari by user:", error);
     return {
       code: 500,
       success: false,
@@ -354,7 +350,7 @@ const checkForConflicts = async (date, startTime, endTime, machine) => {
       maintenanceConflicts,
     };
   } catch (error) {
-    console.log("Error checking for conflicts:", error);
+    console.error("Error checking for conflicts:", error);
     throw error;
   }
 };
@@ -490,7 +486,7 @@ const getAllProgramari = async (req, res) => {
       message: "Programari fetched successfully",
     };
   } catch (error) {
-    console.log("Error fetching programari:", error);
+    console.error("Error fetching programari:", error);
     return {
       code: 500,
       success: false,
@@ -567,7 +563,7 @@ const updateProgramare = async (req, res) => {
       programare: updatedProgramare,
     };
   } catch (error) {
-    console.log("Error updating programare:", error);
+    console.error("Error updating programare:", error);
     return {
       code: 500,
       success: false,
@@ -666,7 +662,7 @@ const checkForConflictsExcluding = async (
       conflicts: conflicts,
     };
   } catch (error) {
-    console.log("Error checking for conflicts:", error);
+    console.error("Error checking for conflicts:", error);
     throw error;
   }
 };
@@ -739,7 +735,7 @@ const deleteProgramare = async (req, res) => {
       message: "Programare deleted successfully",
     };
   } catch (error) {
-    console.log("Error deleting programare:", error);
+    console.error("Error deleting programare:", error);
     return {
       code: 500,
       success: false,
@@ -1043,10 +1039,7 @@ const cancelProgramareWithReason = async (req, res) => {
         reason: reason,
       };
 
-      console.log("Delete email data being sent:", emailData);
-
-      const emailResult = await sendDeletedBookingEmail({ body: emailData });
-      console.log("Cancellation email sent successfully:", emailResult);
+      await sendDeletedBookingEmail({ body: emailData });
     } catch (emailError) {
       console.error("Error sending cancellation email:", emailError);
       // Nu oprim procesul dacă email-ul nu se trimite

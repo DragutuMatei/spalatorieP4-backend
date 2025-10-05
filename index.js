@@ -77,7 +77,7 @@ app.use("/api", emailRoutes);
 app.use("/api", settingsRouter);
 
 app.get("/", (req, res) => {
-  console.log("API is running...");
+  res.status(200).json({ message: "API is running" });
 });
 
 const PORT = process.env.PORT || 3001;
@@ -110,8 +110,6 @@ const cleanExpiredReservations = () => {
       now - reservation.timestamp > EXPIRATION_TIME
     ) {
       tempReservations.delete(userId);
-      console.log(`Expired temp reservation removed for user: ${userId}`);
-
       // Notifică toți clienții că rezervarea a expirat
       io.emit("cancelTempReservation", { userId });
     }
@@ -211,11 +209,9 @@ app.get("/api/temp-reservations", (req, res) => {
 
 // Socket.io event handlers
 io.on("connection", (socket) => {
-  console.log("User connected:", socket.id);
 
   // Când un utilizator se conectează
   socket.on("userConnected", (data) => {
-    console.log("User connected event:", data);
 
     // Trimite toate rezervările temporare active către utilizatorul care tocmai s-a conectat
     const reservationsObject = Object.fromEntries(tempReservations);
@@ -246,7 +242,6 @@ io.on("connection", (socket) => {
 
   // Când cineva face o rezervare temporară
   socket.on("tempReservation", (data) => {
-    console.log("Temp reservation received:", data);
 
     if (data.userId && data.reservation) {
       // Adaugă timestamp pentru expirare
@@ -257,16 +252,11 @@ io.on("connection", (socket) => {
 
       // Notifică toți ceilalți clienți conectați
       socket.broadcast.emit("tempReservation", data);
-
-      console.log(
-        `Temp reservation saved for user ${data.userId} on ${data.reservation.date} for ${data.reservation.machine}`
-      );
     }
   });
 
   // Când cineva anulează o rezervare temporară
   socket.on("cancelTempReservation", (data) => {
-    console.log("Cancel temp reservation:", data);
 
     if (data.userId) {
       // Șterge rezervarea temporară
@@ -274,8 +264,6 @@ io.on("connection", (socket) => {
 
       // Notifică toți ceilalți clienți conectați
       socket.broadcast.emit("cancelTempReservation", data);
-
-      console.log(`Temp reservation cancelled for user ${data.userId}`);
     }
   });
 
@@ -302,7 +290,6 @@ io.on("connection", (socket) => {
 
   // Când utilizatorul se deconectează
   socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id);
 
     // Opțional: poți să ștergi rezervarea temporară a utilizatorului deconectat
     // sau să o lași să expire automat după 15 minute
@@ -321,7 +308,6 @@ io.on("connection", (socket) => {
   // Event handlers existente pentru programări (păstrează-le)
   socket.on("programare", (data) => {
     // Codul tău existent pentru programări
-    console.log("Programare event:", data);
 
     // Când se creează o programare definitivă, șterge rezervarea temporară dacă există
     if (data.action === "create" && data.programare && data.programare.user) {
@@ -329,9 +315,6 @@ io.on("connection", (socket) => {
       if (tempReservations.has(userId)) {
         tempReservations.delete(userId);
         io.emit("cancelTempReservation", { userId });
-        console.log(
-          `Temp reservation removed after final booking for user: ${userId}`
-        );
       }
 
       if (dryerLiveSelections.has(userId)) {
@@ -346,22 +329,6 @@ io.on("connection", (socket) => {
 });
 
 // Funcție helper pentru debugging (opțională)
-const logCurrentReservations = () => {
-  console.log("Current temp reservations:", tempReservations.size);
-  for (const [userId, reservation] of tempReservations.entries()) {
-    console.log(
-      `- User ${userId}: ${reservation.machine} on ${reservation.date}`
-    );
-  }
-  console.log("Current dryer selections:", dryerLiveSelections.size);
-  for (const [userId, selection] of dryerLiveSelections.entries()) {
-    console.log(`- Dryer selection ${userId}:`, selection);
-  }
-};
-
-// Log rezervările la fiecare 5 minute (pentru debugging)
-setInterval(logCurrentReservations, 5 * 60 * 1000);
 httpServer.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
   startWeeklyProgramariCleanup();
 });
