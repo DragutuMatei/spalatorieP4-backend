@@ -1,16 +1,17 @@
-import { db } from "../utils/admin_fire.js";
+import { getCollection } from "../utils/collections.js";
 import { getIO } from "../utils/socket.js";
-import { sendBookingConfirmationEmail } from "./emailService.js";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
 import customParseFormat from "dayjs/plugin/customParseFormat.js";
+import { deleteProgramariOlderThanThreeDays } from "./cleanup.js";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
 dayjs.extend(customParseFormat);
 
 const BUCURESTI_TZ = "Europe/Bucharest";
+const DRYER_MACHINE = "Uscator";
 
 const toBucharestDayjs = (value) => {
   if (value === undefined || value === null) {
@@ -27,7 +28,9 @@ const toBucharestDayjs = (value) => {
 
   if (typeof value === "object") {
     if (value.seconds !== undefined && value.nanoseconds !== undefined) {
-      return dayjs.unix(value.seconds + value.nanoseconds / 1_000_000_000).tz(BUCURESTI_TZ);
+      return dayjs
+        .unix(value.seconds + value.nanoseconds / 1_000_000_000)
+        .tz(BUCURESTI_TZ);
     }
 
     if (value._seconds !== undefined && value._nanoseconds !== undefined) {
@@ -64,15 +67,20 @@ const formatBucharestDate = (value, formatStr = "DD/MM/YYYY") => {
 const saveProgramare = async (req, res) => {
   const { programareData } = req.body;
 
-  console.log("Received programareData:", programareData);
-  console.log("Date format received:", programareData.date);
-
   try {
+    if (!programareData?.machine) {
+      return {
+        code: 400,
+        success: false,
+        message: "Tipul mașinii este obligatoriu pentru programare.",
+      };
+    }
+
     if (programareData?.user) {
       const userUid = programareData.user.uid;
       if (userUid) {
         try {
-          const userDoc = await db.collection("users").doc(userUid).get();
+          const userDoc = await getCollection("users").doc(userUid).get();
           if (userDoc.exists) {
             const userData = userDoc.data();
             if (!programareData.user.telefon && userData.telefon) {
@@ -87,6 +95,54 @@ const saveProgramare = async (req, res) => {
           console.warn("Unable to enrich programare user data:", lookupError);
         }
       }
+    }
+
+    const isDryerBooking = programareData.machine === DRYER_MACHINE;
+
+    if (isDryerBooking) {
+      const durationMinutes = Number(programareData.durationMinutes);
+      if (!Number.isFinite(durationMinutes) || durationMinutes <= 0) {
+        return {
+          code: 400,
+          success: false,
+          message: "Durata pentru uscător trebuie să fie un număr pozitiv.",
+        };
+      }
+
+      const startTimeBucharest = programareData.startTimestamp
+        ? toBucharestDayjs(programareData.startTimestamp)
+        : toBucharestDayjs(
+            `${programareData.date} ${programareData.start_interval_time}`
+          );
+
+      if (!startTimeBucharest.isValid()) {
+        return {
+          code: 400,
+          success: false,
+          message: "Data pentru uscător nu este validă.",
+        };
+      }
+
+      const endTimeBucharest = startTimeBucharest.add(durationMinutes, "minute");
+
+      programareData.date = startTimeBucharest.format("DD/MM/YYYY");
+      programareData.start_interval_time = startTimeBucharest.format("HH:mm");
+      programareData.final_interval_time = endTimeBucharest.format("HH:mm");
+      programareData.startsAt = startTimeBucharest.valueOf();
+      programareData.endsAt = endTimeBucharest.valueOf();
+      programareData.duration = durationMinutes;
+      programareData.active =
+        programareData.active ||
+        {
+          status: true,
+          message: "Program uscător activ",
+          startedAt: new Date(),
+        };
+    } else {
+      programareData.duration = calculateDuration(
+        programareData.start_interval_time,
+        programareData.final_interval_time
+      );
     }
 
     // Verificăm dacă există conflict de programare
@@ -107,40 +163,9 @@ const saveProgramare = async (req, res) => {
       };
     }
 
-    const proRef = await db.collection("programari").add(programareData);
+    const proRef = await getCollection("programari").add(programareData);
     const content = await proRef.get();
     const data = { ...content.data(), uid: proRef.id };
-    console.log(data);
-
-    // Trimitem email de confirmare
-    try {
-      // Normalizăm data pentru email
-      let normalizedDate = formatBucharestDate(programareData.date);
-      if (!normalizedDate) {
-        normalizedDate = formatBucharestDate(dayjs().tz(BUCURESTI_TZ));
-      }
-
-      const emailData = {
-        to: programareData.user.google?.email || programareData.user.email,
-        fullName: programareData.user.numeComplet,
-        room: programareData.user.camera,
-        machine: programareData.machine,
-        date: normalizedDate,
-        startTime: programareData.start_interval_time,
-        duration: calculateDuration(
-          programareData.start_interval_time,
-          programareData.final_interval_time
-        ),
-      };
-
-      console.log("Email data being sent:", emailData);
-
-      await sendBookingConfirmationEmail(emailData);
-      console.log("Booking confirmation email sent successfully");
-    } catch (emailError) {
-      console.error("Error sending booking confirmation email:", emailError);
-      // Nu oprim procesul dacă email-ul nu se trimite
-    }
 
     return {
       code: 200,
@@ -149,7 +174,7 @@ const saveProgramare = async (req, res) => {
       programare: data,
     };
   } catch (error) {
-    console.log("Error saving programare:", error);
+    console.error("Error saving programare:", error);
     return {
       code: 500,
       success: false,
@@ -163,9 +188,11 @@ const getProgramareByUserUid = async (req, res) => {
   const { uid } = req.params;
 
   try {
-    const programariRef = db
-      .collection("programari")
-      .where("user.uid", "==", uid);
+    const programariRef = getCollection("programari").where(
+      "user.uid",
+      "==",
+      uid
+    );
     const snapshot = await programariRef.get();
 
     if (snapshot.empty) {
@@ -194,7 +221,7 @@ const getProgramareByUserUid = async (req, res) => {
       message: "Programari found for this user",
     };
   } catch (error) {
-    console.log("Error fetching programari by user:", error);
+    console.error("Error fetching programari by user:", error);
     return {
       code: 500,
       success: false,
@@ -210,8 +237,7 @@ const checkForConflicts = async (date, startTime, endTime, machine) => {
     const targetDate = formatBucharestDate(date);
 
     // Query pentru programările din aceeași zi
-    const programariRef = db
-      .collection("programari")
+    const programariRef = getCollection("programari")
       .where("active.status", "==", true)
       .where("machine", "==", machine);
 
@@ -222,39 +248,109 @@ const checkForConflicts = async (date, startTime, endTime, machine) => {
     }
 
     const conflicts = [];
+    const updates = [];
+    const now = dayjs().tz(BUCURESTI_TZ).valueOf();
 
-    snapshot.forEach((doc) => {
-      const programare = doc.data();
-      const programareDate = formatBucharestDate(programare.date);
+    await Promise.all(
+      snapshot.docs.map(async (doc) => {
+        const programare = doc.data();
 
-      // Verificăm doar programările din aceeași zi
-      if (programareDate === targetDate) {
-        // Verificăm dacă intervalele se suprapun
-        const hasTimeConflict = checkTimeOverlap(
-          startTime,
-          endTime,
-          programare.start_interval_time,
-          programare.final_interval_time
-        );
-
-        if (hasTimeConflict) {
-          conflicts.push({
-            uid: doc.id,
-            user: programare.user.numeComplet,
-            camera: programare.user.camera,
-            start_time: programare.start_interval_time,
-            end_time: programare.final_interval_time,
-          });
+        if (
+          machine === DRYER_MACHINE &&
+          programare.active?.status &&
+          typeof programare.endsAt === "number" &&
+          programare.endsAt <= now
+        ) {
+          updates.push(
+            doc.ref.update({
+              active: {
+                status: false,
+                message: "Program uscător finalizat automat",
+                expiredAt: new Date(),
+              },
+            })
+          );
+          return;
         }
+
+        const programareDate = formatBucharestDate(programare.date);
+
+        if (programareDate === targetDate) {
+          const hasTimeConflict = checkTimeOverlap(
+            startTime,
+            endTime,
+            programare.start_interval_time,
+            programare.final_interval_time
+          );
+
+          if (hasTimeConflict) {
+            conflicts.push({
+              uid: doc.id,
+              user: programare.user.numeComplet,
+              camera: programare.user.camera,
+              start_time: programare.start_interval_time,
+              end_time: programare.final_interval_time,
+            });
+          }
+        }
+      })
+    );
+
+    if (updates.length) {
+      try {
+        await Promise.all(updates);
+      } catch (error) {
+        console.warn(
+          "Failed to auto-expire dryer bookings during conflict check",
+          error
+        );
       }
-    });
+    }
+
+    let maintenanceConflicts = [];
+
+    if (machine === DRYER_MACHINE) {
+      const maintenanceRef = getCollection("maintenance")
+        .where("machine", "==", DRYER_MACHINE)
+        .where("date", "==", targetDate);
+
+      const maintenanceSnapshot = await maintenanceRef.get();
+
+      if (!maintenanceSnapshot.empty) {
+        const requestedStartMinutes = parseTimeToMinutes(startTime);
+        const requestedEndMinutes = parseTimeToMinutes(endTime);
+
+        maintenanceSnapshot.forEach((doc) => {
+          const maintenance = doc.data();
+          const maintenanceStartMinutes = parseTimeToMinutes(
+            maintenance.startTime || maintenance.start_interval_time
+          );
+          const maintenanceEndMinutes = parseTimeToMinutes(
+            maintenance.endTime || maintenance.final_interval_time
+          );
+
+          const overlapsMaintenance =
+            requestedStartMinutes < maintenanceEndMinutes &&
+            requestedEndMinutes > maintenanceStartMinutes;
+
+          if (overlapsMaintenance) {
+            maintenanceConflicts.push({
+              maintenanceId: doc.id,
+              maintenance,
+            });
+          }
+        });
+      }
+    }
 
     return {
-      hasConflict: conflicts.length > 0,
+      hasConflict:
+        conflicts.length > 0 || maintenanceConflicts.length > 0,
       conflicts: conflicts,
+      maintenanceConflicts,
     };
   } catch (error) {
-    console.log("Error checking for conflicts:", error);
+    console.error("Error checking for conflicts:", error);
     throw error;
   }
 };
@@ -279,7 +375,7 @@ const checkTimeOverlap = (start1, end1, start2, end2) => {
 
 const getAllProgramari = async (req, res) => {
   try {
-    const programareRef = db.collection("programari");
+    const programareRef = getCollection("programari");
     const snapshot = await programareRef.get();
     if (snapshot.empty) {
       return {
@@ -292,17 +388,68 @@ const getAllProgramari = async (req, res) => {
     const programari = [];
     const userCache = {};
 
+    const nowValue = dayjs().tz(BUCURESTI_TZ).valueOf();
+
     for (const doc of snapshot.docs) {
       const data = doc.data();
 
       if (data.active && data.active.status === true) {
+        if (data.machine === DRYER_MACHINE) {
+          let endsAtMillis = Number.isFinite(data.endsAt) ? data.endsAt : null;
+          if (!Number.isFinite(endsAtMillis) && Number.isFinite(data.endTimestamp)) {
+            endsAtMillis = data.endTimestamp;
+          }
+
+          if (!Number.isFinite(endsAtMillis)) {
+            const bookingDate = formatBucharestDate(data.date);
+            if (bookingDate) {
+              const endCandidate = dayjs.tz(
+                `${bookingDate} ${data.final_interval_time}`,
+                "DD/MM/YYYY HH:mm",
+                BUCURESTI_TZ
+              );
+              if (endCandidate.isValid()) {
+                endsAtMillis = endCandidate.valueOf();
+              }
+            }
+          }
+
+          if (Number.isFinite(endsAtMillis) && endsAtMillis <= nowValue) {
+            const updatedActiveState = {
+              status: false,
+              message: "Program uscător finalizat automat",
+              expiredAt: new Date(),
+            };
+
+            try {
+              await doc.ref.update({ active: updatedActiveState });
+              const expiredProgramare = {
+                uid: doc.id,
+                ...data,
+                active: updatedActiveState,
+              };
+              getIO().emit("programare", {
+                action: "update",
+                programare: expiredProgramare,
+              });
+            } catch (updateError) {
+              console.error(
+                "Failed to auto-expire dryer booking",
+                doc.id,
+                updateError
+              );
+            }
+            continue;
+          }
+        }
+
         const bookingUser = data.user || {};
         const userUid = bookingUser.uid;
 
         if (userUid && (!bookingUser.telefon || !bookingUser.email)) {
           if (!userCache[userUid]) {
             try {
-              const userDoc = await db.collection("users").doc(userUid).get();
+              const userDoc = await getCollection("users").doc(userUid).get();
               userCache[userUid] = userDoc.exists ? userDoc.data() : null;
             } catch (lookupError) {
               console.warn(
@@ -339,7 +486,7 @@ const getAllProgramari = async (req, res) => {
       message: "Programari fetched successfully",
     };
   } catch (error) {
-    console.log("Error fetching programari:", error);
+    console.error("Error fetching programari:", error);
     return {
       code: 500,
       success: false,
@@ -353,7 +500,7 @@ const updateProgramare = async (req, res) => {
   const { programareId, updatedData } = req.body;
 
   try {
-    const programareRef = db.collection("programari").doc(programareId);
+    const programareRef = getCollection("programari").doc(programareId);
     const existingDoc = await programareRef.get();
 
     if (!existingDoc.exists) {
@@ -416,7 +563,7 @@ const updateProgramare = async (req, res) => {
       programare: updatedProgramare,
     };
   } catch (error) {
-    console.log("Error updating programare:", error);
+    console.error("Error updating programare:", error);
     return {
       code: 500,
       success: false,
@@ -436,8 +583,7 @@ const checkForConflictsExcluding = async (
   try {
     const targetDate = formatBucharestDate(date);
 
-    const programariRef = db
-      .collection("programari")
+    const programariRef = getCollection("programari")
       .where("active.status", "==", true)
       .where("machine", "==", machine);
 
@@ -448,39 +594,75 @@ const checkForConflictsExcluding = async (
     }
 
     const conflicts = [];
+    const updates = [];
+    const now = dayjs().tz(BUCURESTI_TZ).valueOf();
 
-    snapshot.forEach((doc) => {
-      if (doc.id === excludeId) return;
-
-      const programare = doc.data();
-      const programareDate = formatBucharestDate(programare.date);
-
-      if (programareDate === targetDate) {
-        const hasTimeConflict = checkTimeOverlap(
-          startTime,
-          endTime,
-          programare.start_interval_time,
-          programare.final_interval_time
-        );
-
-        if (hasTimeConflict) {
-          conflicts.push({
-            uid: doc.id,
-            user: programare.user.numeComplet,
-            camera: programare.user.camera,
-            start_time: programare.start_interval_time,
-            end_time: programare.final_interval_time,
-          });
+    await Promise.all(
+      snapshot.docs.map(async (doc) => {
+        if (doc.id === excludeId) {
+          return;
         }
+
+        const programare = doc.data();
+
+        if (
+          machine === DRYER_MACHINE &&
+          programare.active?.status &&
+          typeof programare.endsAt === "number" &&
+          programare.endsAt <= now
+        ) {
+          updates.push(
+            doc.ref.update({
+              active: {
+                status: false,
+                message: "Program uscător finalizat automat",
+                expiredAt: new Date(),
+              },
+            })
+          );
+          return;
+        }
+
+        const programareDate = formatBucharestDate(programare.date);
+
+        if (programareDate === targetDate) {
+          const hasTimeConflict = checkTimeOverlap(
+            startTime,
+            endTime,
+            programare.start_interval_time,
+            programare.final_interval_time
+          );
+
+          if (hasTimeConflict) {
+            conflicts.push({
+              uid: doc.id,
+              user: programare.user.numeComplet,
+              camera: programare.user.camera,
+              start_time: programare.start_interval_time,
+              end_time: programare.final_interval_time,
+            });
+          }
+        }
+      })
+    );
+
+    if (updates.length) {
+      try {
+        await Promise.all(updates);
+      } catch (error) {
+        console.warn(
+          "Failed to auto-expire dryer bookings during conflict exclusion check",
+          error
+        );
       }
-    });
+    }
 
     return {
       hasConflict: conflicts.length > 0,
       conflicts: conflicts,
     };
   } catch (error) {
-    console.log("Error checking for conflicts:", error);
+    console.error("Error checking for conflicts:", error);
     throw error;
   }
 };
@@ -489,7 +671,7 @@ const deleteProgramare = async (req, res) => {
   const { uid } = req.params;
 
   try {
-    const programareRef = db.collection("programari").doc(uid);
+    const programareRef = getCollection("programari").doc(uid);
     const bookingDoc = await programareRef.get();
 
     if (!bookingDoc.exists) {
@@ -510,13 +692,17 @@ const deleteProgramare = async (req, res) => {
 
     if (userUid) {
       try {
-        const userDoc = await db.collection("users").doc(userUid).get();
+        const userDoc = await getCollection("users").doc(userUid).get();
         if (userDoc.exists) {
           userData = userDoc.data();
           userEmail = userData.google?.email || userData.email || userEmail;
         }
       } catch (userError) {
-        console.warn("Unable to load user for cancellation email", userUid, userError);
+        console.warn(
+          "Unable to load user for cancellation email",
+          userUid,
+          userError
+        );
       }
     }
 
@@ -535,7 +721,10 @@ const deleteProgramare = async (req, res) => {
         },
       });
     } catch (emailError) {
-      console.error("Error sending cancellation email (user delete):", emailError);
+      console.error(
+        "Error sending cancellation email (user delete):",
+        emailError
+      );
     }
 
     getIO().emit("programare", { action: "delete", programareId: uid });
@@ -546,7 +735,7 @@ const deleteProgramare = async (req, res) => {
       message: "Programare deleted successfully",
     };
   } catch (error) {
-    console.log("Error deleting programare:", error);
+    console.error("Error deleting programare:", error);
     return {
       code: 500,
       success: false,
@@ -562,7 +751,7 @@ const deleteProgramareWithReason = async (req, res) => {
 
   try {
     // Get booking details
-    const bookingRef = db.collection("programari").doc(bookingId);
+    const bookingRef = getCollection("programari").doc(bookingId);
     const bookingDoc = await bookingRef.get();
 
     if (!bookingDoc.exists) {
@@ -576,7 +765,7 @@ const deleteProgramareWithReason = async (req, res) => {
     const bookingData = bookingDoc.data();
 
     // Get user details
-    const userRef = db.collection("users").doc(bookingData.user.uid);
+    const userRef = getCollection("users").doc(bookingData.user.uid);
     const userDoc = await userRef.get();
 
     if (!userDoc.exists) {
@@ -588,7 +777,7 @@ const deleteProgramareWithReason = async (req, res) => {
     const userData = userDoc.exists ? userDoc.data() : null;
 
     // Create notification
-    await db.collection("notifications").add({
+    await getCollection("notifications").add({
       userId: bookingData.user.uid,
       date: bookingData.date,
       machine: bookingData.machine,
@@ -617,7 +806,10 @@ const deleteProgramareWithReason = async (req, res) => {
       const { sendDeletedBookingEmail } = await import("./emailService.js");
       await sendDeletedBookingEmail({
         body: {
-          to: userData?.google?.email || userData?.email || bookingData.user.email,
+          to:
+            userData?.google?.email ||
+            userData?.email ||
+            bookingData.user.email,
           fullName: bookingData.user.numeComplet,
           room: bookingData.user.camera,
           machine: bookingData.machine,
@@ -674,7 +866,7 @@ const getFilteredBookings = async (req, res) => {
   const { searchTerm, showActiveOnly } = req.query;
 
   try {
-    const programariRef = db.collection("programari");
+    const programariRef = getCollection("programari");
     const snapshot = await programariRef.get();
 
     if (snapshot.empty) {
@@ -751,7 +943,7 @@ const cancelProgramareWithReason = async (req, res) => {
 
   try {
     // Get booking details
-    const bookingRef = db.collection("programari").doc(bookingId);
+    const bookingRef = getCollection("programari").doc(bookingId);
     const bookingDoc = await bookingRef.get();
 
     if (!bookingDoc.exists) {
@@ -777,7 +969,7 @@ const cancelProgramareWithReason = async (req, res) => {
     await bookingRef.update(updatedData);
 
     // Get user details
-    const userRef = db.collection("users").doc(bookingData.user.uid);
+    const userRef = getCollection("users").doc(bookingData.user.uid);
     const userDoc = await userRef.get();
 
     const userData = userDoc.exists ? userDoc.data() : null;
@@ -786,11 +978,11 @@ const cancelProgramareWithReason = async (req, res) => {
     const notificationData = {
       userId: bookingData.user.uid,
       type: "booking_cancelled",
-      message: `Programarea ta pentru ${bookingData.machine} din data ${formatBucharestDate(
-        bookingData.date
-      )} (${bookingData.start_interval_time} - ${
-        bookingData.final_interval_time
-      }) a fost anulată. Motiv: ${reason}`,
+      message: `Programarea ta pentru ${
+        bookingData.machine
+      } din data ${formatBucharestDate(bookingData.date)} (${
+        bookingData.start_interval_time
+      } - ${bookingData.final_interval_time}) a fost anulată. Motiv: ${reason}`,
       date: bookingData.date,
       machine: bookingData.machine,
       startTime: bookingData.start_interval_time,
@@ -803,7 +995,6 @@ const cancelProgramareWithReason = async (req, res) => {
         ),
       reason: reason,
       createdAt: new Date(),
-      read: false,
       userDetails: {
         numeComplet: bookingData.user.numeComplet,
         camera: bookingData.user.camera,
@@ -812,9 +1003,9 @@ const cancelProgramareWithReason = async (req, res) => {
       },
     };
 
-    const notificationRef = await db
-      .collection("notifications")
-      .add(notificationData);
+    const notificationRef = await getCollection("notifications").add(
+      notificationData
+    );
     const notification = {
       uid: notificationRef.id,
       ...notificationData,
@@ -848,10 +1039,7 @@ const cancelProgramareWithReason = async (req, res) => {
         reason: reason,
       };
 
-      console.log("Delete email data being sent:", emailData);
-
-      const emailResult = await sendDeletedBookingEmail({ body: emailData });
-      console.log("Cancellation email sent successfully:", emailResult);
+      await sendDeletedBookingEmail({ body: emailData });
     } catch (emailError) {
       console.error("Error sending cancellation email:", emailError);
       // Nu oprim procesul dacă email-ul nu se trimite
@@ -883,6 +1071,40 @@ const cancelProgramareWithReason = async (req, res) => {
   }
 };
 
+const runManualCleanup = async (req, res) => {
+  const scope = req.body?.scope || "auto";
+
+  try {
+    if (!["official", "local", "auto", "remote"].includes(scope)) {
+      return {
+        code: 400,
+        success: false,
+        message: "Scope invalid. Folosește official sau local.",
+      };
+    }
+
+    const { deletedCount, deletedNotifications } =
+      await deleteProgramariOlderThanThreeDays(scope);
+
+    return {
+      code: 200,
+      success: true,
+      message: `Ștergere manuală completă pentru scope=${scope}.`,
+      deletedProgramari: deletedCount,
+      deletedNotifications,
+      scope,
+    };
+  } catch (error) {
+    console.error("[Cleanup] Manual run failed:", error);
+    return {
+      code: 500,
+      success: false,
+      message: "Curățarea manuală a eșuat.",
+      error: error.message,
+    };
+  }
+};
+
 export {
   saveProgramare,
   getAllProgramari,
@@ -892,4 +1114,5 @@ export {
   deleteProgramareWithReason,
   cancelProgramareWithReason,
   getFilteredBookings,
+  runManualCleanup,
 };

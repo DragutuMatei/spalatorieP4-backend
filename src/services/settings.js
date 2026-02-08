@@ -1,9 +1,9 @@
-import { db } from "../utils/admin_fire.js";
+import { getCollection } from "../utils/collections.js";
 
 const saveSetting = async (key, value) => {
   try {
     console.log(`Saving setting: ${key} = ${value}`);
-    const settingsRef = db.collection("settings").doc("availability");
+    const settingsRef = getCollection("settings").doc("availability");
     await settingsRef.set({ [key]: value }, { merge: true });
     const saveDoc = await settingsRef.get();
     const settingsData = saveDoc.data() || {};
@@ -33,7 +33,7 @@ const saveSetting = async (key, value) => {
 
 const getSettings = async () => {
   try {
-    const settingsRef = db.collection("settings").doc("availability");
+    const settingsRef = getCollection("settings").doc("availability");
     const settings = await settingsRef.get();
     if (!settings.exists) {
       // Creez setările default dacă nu există

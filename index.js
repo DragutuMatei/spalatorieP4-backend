@@ -8,7 +8,6 @@ const app = express();
 import userRoutes from "./src/routes/userRoutes.js";
 import programariRoutes from "./src/routes/programariRoutes.js";
 import maintenanceRoutes from "./src/routes/maintenanceRoutes.js";
-import notificationRoutes from "./src/routes/notificationRoutes.js";
 import emailRoutes from "./src/routes/emailRoutes.js";
 
 import { createServer } from "http";
@@ -18,6 +17,8 @@ import settingsRouter from "./src/routes/settingsRoutes.js";
 import dayjs from "dayjs";
 import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
+import { startWeeklyProgramariCleanup } from "./src/services/cleanup.js";
+import notificationRoutes from "./src/routes/notificationRoutes.js";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -41,7 +42,7 @@ app.use(helmet());
 const allowedOrigins = [
   "http://localhost:3002",
   "http://localhost:3000",
-  "http://localhost:3003",
+  "https://develop.spalatoriep4.osfiir.ro",
   "https://spalatoriep4.osfiir.ro",
 ];
 app.use(
@@ -76,7 +77,7 @@ app.use("/api", emailRoutes);
 app.use("/api", settingsRouter);
 
 app.get("/", (req, res) => {
-  console.log("API is running...");
+  res.status(200).json({ message: "API is running" });
 });
 
 const PORT = process.env.PORT || 3001;
@@ -96,6 +97,7 @@ setIO(io);
 
 // Stocare in-memory pentru rezervările temporare (în producție, folosește Redis sau o bază de date)
 const tempReservations = new Map();
+const dryerLiveSelections = new Map();
 
 // Funcție pentru curățarea rezervărilor expirate (opțional)
 const cleanExpiredReservations = () => {
@@ -108,8 +110,6 @@ const cleanExpiredReservations = () => {
       now - reservation.timestamp > EXPIRATION_TIME
     ) {
       tempReservations.delete(userId);
-      console.log(`Expired temp reservation removed for user: ${userId}`);
-
       // Notifică toți clienții că rezervarea a expirat
       io.emit("cancelTempReservation", { userId });
     }
@@ -176,7 +176,9 @@ END:VCALENDAR`;
     res.setHeader("Content-Type", "text/calendar");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="rezervare-${machine}-${startLocal.format("YYYY-MM-DD")}.ics"`
+      `attachment; filename="rezervare-${machine}-${startLocal.format(
+        "YYYY-MM-DD"
+      )}.ics"`
     );
     res.send(icsContent);
   } catch (error) {
@@ -207,16 +209,19 @@ app.get("/api/temp-reservations", (req, res) => {
 
 // Socket.io event handlers
 io.on("connection", (socket) => {
-  console.log("User connected:", socket.id);
 
   // Când un utilizator se conectează
   socket.on("userConnected", (data) => {
-    console.log("User connected event:", data);
 
     // Trimite toate rezervările temporare active către utilizatorul care tocmai s-a conectat
     const reservationsObject = Object.fromEntries(tempReservations);
     socket.emit("syncTempReservations", {
       tempReservations: reservationsObject,
+    });
+
+    const dryerSelectionsObject = Object.fromEntries(dryerLiveSelections);
+    socket.emit("syncDryerSelection", {
+      dryerSelections: dryerSelectionsObject,
     });
   });
 
@@ -228,9 +233,15 @@ io.on("connection", (socket) => {
     });
   });
 
+  socket.on("requestDryerSelectionSync", () => {
+    const dryerSelectionsObject = Object.fromEntries(dryerLiveSelections);
+    socket.emit("syncDryerSelection", {
+      dryerSelections: dryerSelectionsObject,
+    });
+  });
+
   // Când cineva face o rezervare temporară
   socket.on("tempReservation", (data) => {
-    console.log("Temp reservation received:", data);
 
     if (data.userId && data.reservation) {
       // Adaugă timestamp pentru expirare
@@ -241,16 +252,11 @@ io.on("connection", (socket) => {
 
       // Notifică toți ceilalți clienți conectați
       socket.broadcast.emit("tempReservation", data);
-
-      console.log(
-        `Temp reservation saved for user ${data.userId} on ${data.reservation.date} for ${data.reservation.machine}`
-      );
     }
   });
 
   // Când cineva anulează o rezervare temporară
   socket.on("cancelTempReservation", (data) => {
-    console.log("Cancel temp reservation:", data);
 
     if (data.userId) {
       // Șterge rezervarea temporară
@@ -258,14 +264,32 @@ io.on("connection", (socket) => {
 
       // Notifică toți ceilalți clienți conectați
       socket.broadcast.emit("cancelTempReservation", data);
-
-      console.log(`Temp reservation cancelled for user ${data.userId}`);
     }
+  });
+
+  socket.on("dryerSelection", (data) => {
+    if (!data?.userId || !data.selection) {
+      return;
+    }
+
+    dryerLiveSelections.set(data.userId, data.selection);
+    socket.broadcast.emit("dryerSelection", data);
+  });
+
+  socket.on("cancelDryerSelection", (data) => {
+    if (!data?.userId) {
+      return;
+    }
+
+    if (dryerLiveSelections.has(data.userId)) {
+      dryerLiveSelections.delete(data.userId);
+    }
+
+    socket.broadcast.emit("cancelDryerSelection", data);
   });
 
   // Când utilizatorul se deconectează
   socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id);
 
     // Opțional: poți să ștergi rezervarea temporară a utilizatorului deconectat
     // sau să o lași să expire automat după 15 minute
@@ -284,7 +308,6 @@ io.on("connection", (socket) => {
   // Event handlers existente pentru programări (păstrează-le)
   socket.on("programare", (data) => {
     // Codul tău existent pentru programări
-    console.log("Programare event:", data);
 
     // Când se creează o programare definitivă, șterge rezervarea temporară dacă există
     if (data.action === "create" && data.programare && data.programare.user) {
@@ -292,9 +315,11 @@ io.on("connection", (socket) => {
       if (tempReservations.has(userId)) {
         tempReservations.delete(userId);
         io.emit("cancelTempReservation", { userId });
-        console.log(
-          `Temp reservation removed after final booking for user: ${userId}`
-        );
+      }
+
+      if (dryerLiveSelections.has(userId)) {
+        dryerLiveSelections.delete(userId);
+        io.emit("cancelDryerSelection", { userId });
       }
     }
 
@@ -304,17 +329,6 @@ io.on("connection", (socket) => {
 });
 
 // Funcție helper pentru debugging (opțională)
-const logCurrentReservations = () => {
-  console.log("Current temp reservations:", tempReservations.size);
-  for (const [userId, reservation] of tempReservations.entries()) {
-    console.log(
-      `- User ${userId}: ${reservation.machine} on ${reservation.date}`
-    );
-  }
-};
-
-// Log rezervările la fiecare 5 minute (pentru debugging)
-setInterval(logCurrentReservations, 5 * 60 * 1000);
 httpServer.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  startWeeklyProgramariCleanup();
 });

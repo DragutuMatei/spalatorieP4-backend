@@ -136,6 +136,7 @@ import {
   deleteProgramareWithReason,
   cancelProgramareWithReason,
   getFilteredBookings,
+  runManualCleanup,
 } from "../services/programari.js";
 import { getIO } from "../utils/socket.js";
 
@@ -213,6 +214,11 @@ const getFilteredBookingsController = async (req, res) => {
   handleResponse(res, result);
 };
 
+const triggerManualCleanupController = async (req, res) => {
+  const result = await runManualCleanup(req, res);
+  handleResponse(res, result);
+};
+
 export {
   saveProgramareController,
   getAllProgramariController,
@@ -222,4 +228,5 @@ export {
   deleteProgramareWithReasonController,
   cancelProgramareWithReasonController,
   getFilteredBookingsController,
+  triggerManualCleanupController,
 };

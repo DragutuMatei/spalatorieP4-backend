@@ -1,4 +1,4 @@
-import { db } from "../utils/admin_fire.js";
+import { getCollection } from "../utils/collections.js";
 import { getIO } from "../utils/socket.js";
 import dayjs from "dayjs";
 import { sendDeletedBookingEmail } from "./emailService.js";
@@ -18,10 +18,10 @@ const addMaintenanceInterval = async (req, res) => {
       createdAt: dayjs().valueOf()
     };
 
-    const maintenanceRef = await db.collection("maintenance").add(maintenanceData);
+    const maintenanceRef = await getCollection("maintenance").add(maintenanceData);
 
     // Find conflicting bookings
-    const programariRef = db.collection("programari")
+    const programariRef = getCollection("programari")
       .where("machine", "==", machine)
       .where("active.status", "==", true);
     
@@ -65,7 +65,7 @@ const addMaintenanceInterval = async (req, res) => {
 
     for (const booking of conflictingBookings) {
       try {
-        const bookingRef = db.collection("programari").doc(booking.id);
+        const bookingRef = getCollection("programari").doc(booking.id);
         const cancellationPayload = {
           active: {
             status: false,
@@ -87,7 +87,7 @@ const addMaintenanceInterval = async (req, res) => {
 
         if (userUid) {
           try {
-            const userDoc = await db.collection("users").doc(userUid).get();
+            const userDoc = await getCollection("users").doc(userUid).get();
             if (userDoc.exists) {
               userData = userDoc.data();
               userEmail = userData.google?.email || userData.email || userEmail;
@@ -113,7 +113,6 @@ const addMaintenanceInterval = async (req, res) => {
             ),
           reason: "Mentenanță programată",
           createdAt: dayjs().valueOf(),
-          read: false,
           userDetails: {
             numeComplet: updatedBooking.user?.numeComplet || "",
             camera: updatedBooking.user?.camera || "",
@@ -121,7 +120,7 @@ const addMaintenanceInterval = async (req, res) => {
           },
         };
 
-        await db.collection("notifications").add(notificationData);
+        await getCollection("notifications").add(notificationData);
 
         // Trimite email de anulare către utilizator, dacă avem o adresă validă
         if (userEmail) {
@@ -183,7 +182,7 @@ const addMaintenanceInterval = async (req, res) => {
 // Get all maintenance intervals
 const getAllMaintenanceIntervals = async (req, res) => {
   try {
-    const maintenanceRef = db.collection("maintenance");
+    const maintenanceRef = getCollection("maintenance");
     const snapshot = await maintenanceRef.get();
     
     if (snapshot.empty) {
@@ -230,7 +229,7 @@ const deleteMaintenanceInterval = async (req, res) => {
   const { maintenanceId } = req.params;
 
   try {
-    const maintenanceRef = db.collection("maintenance").doc(maintenanceId);
+    const maintenanceRef = getCollection("maintenance").doc(maintenanceId);
     const maintenanceDoc = await maintenanceRef.get();
     
     if (!maintenanceDoc.exists) {
@@ -268,14 +267,14 @@ const deleteConflictingBookings = async (req, res) => {
     const notifications = [];
 
     for (const bookingId of bookingIds) {
-      const bookingRef = db.collection("programari").doc(bookingId);
+      const bookingRef = getCollection("programari").doc(bookingId);
       const bookingDoc = await bookingRef.get();
       
       if (bookingDoc.exists) {
         const bookingData = bookingDoc.data();
         
         // Get user details
-        const userRef = db.collection("users").doc(bookingData.user.uid);
+        const userRef = getCollection("users").doc(bookingData.user.uid);
         const userDoc = await userRef.get();
         const userData = userDoc.exists ? userDoc.data() : null;
         
@@ -296,7 +295,7 @@ const deleteConflictingBookings = async (req, res) => {
           }
         };
         
-        await db.collection("notifications").add(notification);
+        await getCollection("notifications").add(notification);
         notifications.push({
           ...notification,
           userEmail: userData?.google?.email || userData?.email || bookingData.user.email
