@@ -64,9 +64,9 @@ const saveUser = async (req, res) => {
         a;
         getIO().emit("programare", { action: "update", programare: b.data() });
       }
-      // console.log("gata");
+      console.log("gata");
     } else {
-      // console.log("===================================================");
+      console.log("===================================================");
     }
 
     return {
@@ -93,6 +93,7 @@ const getUser = async (req, res) => {
     const userRef = getCollection("users").doc(uid);
     const doc = await userRef.get();
     if (!doc.exists) {
+      console.log("User not found");
       return { code: 404, success: false, message: "User not found" };
     }
     return {
@@ -102,6 +103,7 @@ const getUser = async (req, res) => {
       message: "User found",
     };
   } catch (error) {
+    console.log(error);
     return {
       code: 500,
       success: false,
@@ -182,7 +184,7 @@ const toggleUserApproval = async (req, res) => {
     }
 
     await userRef.update({ validate: !validate });
-    
+
     // Get updated user data
     const updatedUserDoc = await userRef.get();
     const updatedUser = { uid: userId, ...updatedUserDoc.data() };
@@ -230,7 +232,7 @@ const toggleUserRole = async (req, res) => {
     }
 
     await userRef.update({ role });
-    
+
     // Get updated user data
     const updatedUserDoc = await userRef.get();
     const updatedUser = { uid: userId, ...updatedUserDoc.data() };
