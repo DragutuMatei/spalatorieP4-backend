@@ -1,7 +1,7 @@
 import os from "os";
 import { db } from "./admin_fire.js";
 
-const LOCAL_SUFFIX = "_local";
+const LOCAL_SUFFIX = "";
 
 const DEV_ORIGINS = [
   "localhost",

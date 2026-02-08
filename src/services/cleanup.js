@@ -366,7 +366,7 @@ const deleteProgramariOlderThanThreeDays = async (scope = "auto") => {
 
 const scheduleNextCleanupRun = () => {
   const now = dayjs().tz(BUCURESTI_TZ);
-  let nextRun = now.day(0).hour(3).minute(0).second(0).millisecond(0);
+  let nextRun = now.day(0).hour(19).minute(50).second(0).millisecond(0);
 
   if (now.isAfter(nextRun)) {
     nextRun = nextRun.add(1, "week");
