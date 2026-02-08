@@ -46,7 +46,7 @@ const saveUser = async (req, res) => {
         programari.push({ uid: doc.id, ...doc.data() });
       });
       for (let i = 0; i < programari.length; i++) {
-        console.log(programari[i]);
+        // console.log(programari[i]);
         const proRef = getCollection("programari").doc(programari[i].uid);
         const a = await proRef.set(
           {
@@ -64,9 +64,9 @@ const saveUser = async (req, res) => {
         a;
         getIO().emit("programare", { action: "update", programare: b.data() });
       }
-      console.log("gata");
+      // console.log("gata");
     } else {
-      console.log("===================================================");
+      // console.log("===================================================");
     }
 
     return {
