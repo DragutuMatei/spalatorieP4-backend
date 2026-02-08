@@ -366,7 +366,7 @@ const deleteProgramariOlderThanThreeDays = async (scope = "auto") => {
 
 const scheduleNextCleanupRun = () => {
   const now = dayjs().tz(BUCURESTI_TZ);
-  let nextRun = now.day(0).hour(19).minute(50).second(0).millisecond(0);
+  let nextRun = now.day(0).hour(3).minute(0).second(0).millisecond(0);
 
   if (now.isAfter(nextRun)) {
     nextRun = nextRun.add(1, "week");
@@ -398,4 +398,61 @@ const startWeeklyProgramariCleanup = () => {
   scheduleNextCleanupRun();
 };
 
-export { startWeeklyProgramariCleanup, deleteProgramariOlderThanThreeDays };
+const deleteExpiredDryerBookings = async (scope = "auto") => {
+  const CUTOFF_MINUTES = 3;
+  const now = dayjs().tz(BUCURESTI_TZ).valueOf();
+  const cutoffTimestamp = now - CUTOFF_MINUTES * 60 * 1000;
+
+  try {
+    const snapshot = await getCollectionWithScope("programari", scope)
+      .where("machine", "==", "Uscator")
+      .where("endsAt", "<=", cutoffTimestamp)
+      .get();
+
+    if (snapshot.empty) {
+      return { deletedCount: 0 };
+    }
+
+    const bookingsToDelete = [];
+    snapshot.forEach((doc) => {
+      bookingsToDelete.push({
+        id: doc.id,
+        ref: doc.ref,
+        data: doc.data(),
+      });
+    });
+
+    if (!bookingsToDelete.length) {
+      return { deletedCount: 0 };
+    }
+
+    // Delete in batches
+    for (const chunk of chunkArray(bookingsToDelete, MAX_BATCH_SIZE)) {
+      const batch = createBatch();
+      chunk.forEach((booking) => batch.delete(booking.ref));
+      await batch.commit();
+    }
+
+    const io = getIO();
+    bookingsToDelete.forEach((booking) => {
+      io.emit("programare", { action: "delete", programareId: booking.id });
+    });
+
+    // Also delete associated notifications
+    await deleteNotificationsLinkedToBookings(bookingsToDelete, scope);
+
+    console.log(
+      `[Cleanup] Deleted ${bookingsToDelete.length} expired dryer bookings.`
+    );
+    return { deletedCount: bookingsToDelete.length };
+  } catch (error) {
+    console.error("[Cleanup] Failed to delete expired dryer bookings:", error);
+    return { deletedCount: 0 };
+  }
+};
+
+export {
+  startWeeklyProgramariCleanup,
+  deleteProgramariOlderThanThreeDays,
+  deleteExpiredDryerBookings,
+};

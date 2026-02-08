@@ -112,8 +112,8 @@ const saveProgramare = async (req, res) => {
       const startTimeBucharest = programareData.startTimestamp
         ? toBucharestDayjs(programareData.startTimestamp)
         : toBucharestDayjs(
-            `${programareData.date} ${programareData.start_interval_time}`
-          );
+          `${programareData.date} ${programareData.start_interval_time}`
+        );
 
       if (!startTimeBucharest.isValid()) {
         return {
@@ -375,12 +375,15 @@ const checkTimeOverlap = (start1, end1, start2, end2) => {
 
 const getAllProgramari = async (req, res) => {
   try {
-    const programareRef = getCollection("programari");
+    let programareRef = getCollection("programari");
     const snapshot = await programareRef.get();
+
+    // If no bookings at all, return empty list (200 OK)
     if (snapshot.empty) {
       return {
-        code: 404,
-        success: false,
+        code: 200,
+        success: true,
+        programari: [],
         message: "No programari found",
       };
     }
@@ -389,9 +392,18 @@ const getAllProgramari = async (req, res) => {
     const userCache = {};
 
     const nowValue = dayjs().tz(BUCURESTI_TZ).valueOf();
+    const targetDate = req.query.date;
 
     for (const doc of snapshot.docs) {
       const data = doc.data();
+
+      // Filter by date if requested
+      if (targetDate) {
+        const docDate = formatBucharestDate(data.date);
+        if (docDate !== targetDate) {
+          continue;
+        }
+      }
 
       if (data.active && data.active.status === true) {
         if (data.machine === DRYER_MACHINE) {
@@ -978,11 +990,9 @@ const cancelProgramareWithReason = async (req, res) => {
     const notificationData = {
       userId: bookingData.user.uid,
       type: "booking_cancelled",
-      message: `Programarea ta pentru ${
-        bookingData.machine
-      } din data ${formatBucharestDate(bookingData.date)} (${
-        bookingData.start_interval_time
-      } - ${bookingData.final_interval_time}) a fost anulată. Motiv: ${reason}`,
+      message: `Programarea ta pentru ${bookingData.machine
+        } din data ${formatBucharestDate(bookingData.date)} (${bookingData.start_interval_time
+        } - ${bookingData.final_interval_time}) a fost anulată. Motiv: ${reason}`,
       date: bookingData.date,
       machine: bookingData.machine,
       startTime: bookingData.start_interval_time,
