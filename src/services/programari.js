@@ -393,6 +393,7 @@ const getAllProgramari = async (req, res) => {
 
     const nowValue = dayjs().tz(BUCURESTI_TZ).valueOf();
     const targetDate = req.query.date;
+    const includeInactive = req.query.includeInactive === "true";
 
     for (const doc of snapshot.docs) {
       const data = doc.data();
@@ -405,56 +406,68 @@ const getAllProgramari = async (req, res) => {
         }
       }
 
-      if (data.active && data.active.status === true) {
-        if (data.machine === DRYER_MACHINE) {
-          let endsAtMillis = Number.isFinite(data.endsAt) ? data.endsAt : null;
-          if (!Number.isFinite(endsAtMillis) && Number.isFinite(data.endTimestamp)) {
-            endsAtMillis = data.endTimestamp;
-          }
+      const isActive = data.active && data.active.status === true;
 
-          if (!Number.isFinite(endsAtMillis)) {
-            const bookingDate = formatBucharestDate(data.date);
-            if (bookingDate) {
-              const endCandidate = dayjs.tz(
-                `${bookingDate} ${data.final_interval_time}`,
-                "DD/MM/YYYY HH:mm",
-                BUCURESTI_TZ
-              );
-              if (endCandidate.isValid()) {
-                endsAtMillis = endCandidate.valueOf();
-              }
+      // Logic for auto-expiring dryer bookings (only if they appear active)
+      if (isActive && data.machine === DRYER_MACHINE) {
+        let endsAtMillis = Number.isFinite(data.endsAt) ? data.endsAt : null;
+        if (!Number.isFinite(endsAtMillis) && Number.isFinite(data.endTimestamp)) {
+          endsAtMillis = data.endTimestamp;
+        }
+
+        if (!Number.isFinite(endsAtMillis)) {
+          const bookingDate = formatBucharestDate(data.date);
+          if (bookingDate) {
+            const endCandidate = dayjs.tz(
+              `${bookingDate} ${data.final_interval_time || ""}`,
+              "DD/MM/YYYY HH:mm",
+              BUCURESTI_TZ
+            );
+            if (endCandidate.isValid()) {
+              endsAtMillis = endCandidate.valueOf();
             }
-          }
-
-          if (Number.isFinite(endsAtMillis) && endsAtMillis <= nowValue) {
-            const updatedActiveState = {
-              status: false,
-              message: "Program uscător finalizat automat",
-              expiredAt: new Date(),
-            };
-
-            try {
-              await doc.ref.update({ active: updatedActiveState });
-              const expiredProgramare = {
-                uid: doc.id,
-                ...data,
-                active: updatedActiveState,
-              };
-              getIO().emit("programare", {
-                action: "update",
-                programare: expiredProgramare,
-              });
-            } catch (updateError) {
-              console.error(
-                "Failed to auto-expire dryer booking",
-                doc.id,
-                updateError
-              );
-            }
-            continue;
           }
         }
 
+        if (Number.isFinite(endsAtMillis) && endsAtMillis <= nowValue) {
+          const updatedActiveState = {
+            status: false,
+            message: "Program uscător finalizat automat",
+            expiredAt: new Date(),
+          };
+
+          try {
+            await doc.ref.update({ active: updatedActiveState });
+            const expiredProgramare = {
+              uid: doc.id,
+              ...data,
+              active: updatedActiveState,
+            };
+            getIO().emit("programare", {
+              action: "update",
+              programare: expiredProgramare,
+            });
+
+            // If this booking just expired, and we only want active ones, skip it unless includeInactive is true
+            if (!includeInactive) {
+              continue;
+            }
+            // Update local data to reflect expiry
+            data.active = updatedActiveState;
+
+          } catch (updateError) {
+            console.error(
+              "Failed to auto-expire dryer booking",
+              doc.id,
+              updateError
+            );
+          }
+        }
+      }
+
+      // Final decision: do we include this booking in the response?
+      // Yes if includeInactive is true OR if it's still active
+      if (includeInactive || (data.active && data.active.status === true)) {
         const bookingUser = data.user || {};
         const userUid = bookingUser.uid;
 
