@@ -401,7 +401,15 @@ const getAllProgramari = async (req, res) => {
       // Filter by date if requested
       if (targetDate) {
         const docDate = formatBucharestDate(data.date);
-        if (docDate !== targetDate) {
+
+        // Exception: Always include active dryer bookings regardless of date
+        // so the frontend knows the dryer is busy right now.
+        const isActiveDryer =
+          data.machine === DRYER_MACHINE &&
+          data.active &&
+          data.active.status === true;
+
+        if (docDate !== targetDate && !isActiveDryer) {
           continue;
         }
       }
