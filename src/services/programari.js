@@ -404,10 +404,39 @@ const getAllProgramari = async (req, res) => {
 
         // Exception: Always include active dryer bookings regardless of date
         // so the frontend knows the dryer is busy right now.
-        const isActiveDryer =
+        let isActiveDryer =
           data.machine === DRYER_MACHINE &&
           data.active &&
           data.active.status === true;
+
+        if (isActiveDryer) {
+          // Double check that it is NOT in the past
+          let endsAtMillis = Number.isFinite(data.endsAt) ? data.endsAt : null;
+          if (
+            !Number.isFinite(endsAtMillis) &&
+            Number.isFinite(data.endTimestamp)
+          ) {
+            endsAtMillis = data.endTimestamp;
+          }
+
+          if (!Number.isFinite(endsAtMillis)) {
+            const bookingDate = formatBucharestDate(data.date);
+            if (bookingDate) {
+              const endCandidate = dayjs.tz(
+                `${bookingDate} ${data.final_interval_time || ""}`,
+                "DD/MM/YYYY HH:mm",
+                BUCURESTI_TZ
+              );
+              if (endCandidate.isValid()) {
+                endsAtMillis = endCandidate.valueOf();
+              }
+            }
+          }
+
+          if (Number.isFinite(endsAtMillis) && endsAtMillis <= nowValue) {
+            isActiveDryer = false;
+          }
+        }
 
         if (docDate !== targetDate && !isActiveDryer) {
           continue;
