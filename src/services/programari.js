@@ -5,6 +5,10 @@ import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
 import customParseFormat from "dayjs/plugin/customParseFormat.js";
 import { deleteProgramariOlderThanThreeDays } from "./cleanup.js";
+import {
+  sendBookingConfirmationEmail,
+  sendDeletedBookingEmail,
+} from "./emailService.js";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -166,6 +170,20 @@ const saveProgramare = async (req, res) => {
     const proRef = await getCollection("programari").add(programareData);
     const content = await proRef.get();
     const data = { ...content.data(), uid: proRef.id };
+
+    try {
+      await sendBookingConfirmationEmail({
+        to: programareData.user.email,
+        fullName: programareData.user.numeComplet,
+        room: programareData.user.camera,
+        machine: programareData.machine,
+        date: programareData.date,
+        startTime: programareData.start_interval_time,
+        duration: programareData.duration,
+      });
+    } catch (emailError) {
+      console.error("Error sending confirmation email:", emailError);
+    }
 
     return {
       code: 200,
@@ -769,8 +787,7 @@ const deleteProgramare = async (req, res) => {
     }
 
     try {
-      const { sendCancelledBookingEmail } = await import("./emailService.js");
-      await sendCancelledBookingEmail({
+      await sendDeletedBookingEmail({
         body: {
           to: userEmail,
           fullName: bookingData.user?.numeComplet || "",
@@ -779,6 +796,12 @@ const deleteProgramare = async (req, res) => {
           date: formatBucharestDate(bookingData.date),
           startTime: bookingData.start_interval_time,
           endTime: bookingData.final_interval_time,
+          duration:
+            bookingData.duration ||
+            calculateDuration(
+              bookingData.start_interval_time,
+              bookingData.final_interval_time
+            ),
           reason: "Anulat de utilizator",
         },
       });
