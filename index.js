@@ -25,6 +25,7 @@ import notificationRoutes from "./src/routes/notificationRoutes.js";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
+app.set('trust proxy', 1);
 
 app.use(bodyParser.json({ limit: "1500mb" }));
 app.use(
@@ -34,7 +35,6 @@ app.use(
     parameterLimit: 500000,
   })
 );
-app.use(bodyParser.text({ limit: "1500mb" }));
 
 app.use(express.json());
 
