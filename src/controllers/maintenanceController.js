@@ -1,8 +1,8 @@
-import { 
-  addMaintenanceInterval, 
-  getAllMaintenanceIntervals, 
+import {
+  addMaintenanceInterval,
+  getAllMaintenanceIntervals,
   deleteMaintenanceInterval,
-  deleteConflictingBookings 
+  deleteConflictingBookings
 } from "../services/maintenance.js";
 import { getIO } from "../utils/socket.js";
 
@@ -13,10 +13,20 @@ export const addMaintenanceIntervalController = async (req, res) => {
 
   if (code === 200) {
     // Emit socket event for live updates
-    getIO().emit("maintenance", { 
-      action: "create", 
-      maintenanceInterval: result.maintenance 
-    });
+    if (result.maintenances && result.maintenances.length > 0) {
+      result.maintenances.forEach((m) => {
+        getIO().emit("maintenance", {
+          action: "create",
+          maintenanceInterval: m
+        });
+      });
+    } else if (result.maintenance) {
+      getIO().emit("maintenance", {
+        action: "create",
+        maintenanceInterval: result.maintenance
+      });
+    }
+
     return res.status(200).json(result);
   } else if (code === 500) {
     return res.status(500).json(result);
@@ -46,9 +56,9 @@ export const deleteMaintenanceIntervalController = async (req, res) => {
 
   if (code === 200) {
     // Emit socket event for live updates
-    getIO().emit("maintenance", { 
-      action: "delete", 
-      maintenanceId: req.params.maintenanceId 
+    getIO().emit("maintenance", {
+      action: "delete",
+      maintenanceId: req.params.maintenanceId
     });
     return res.status(200).json(result);
   } else if (code === 500) {
