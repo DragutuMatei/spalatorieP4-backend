@@ -13,6 +13,7 @@ import {
 dayjs.extend(utc);
 dayjs.extend(timezone);
 dayjs.extend(customParseFormat);
+dayjs.tz.setDefault("Europe/Bucharest");
 
 const BUCURESTI_TZ = "Europe/Bucharest";
 const DRYER_MACHINE = "Uscator";
@@ -22,45 +23,41 @@ const toBucharestDayjs = (value) => {
     return dayjs.invalid();
   }
 
+  // If it's already a dayjs object, just ensure it's in the right timezone
   if (dayjs.isDayjs(value)) {
-    return value.tz(BUCURESTI_TZ);
+    return value.tz();
   }
 
   if (value instanceof Date || typeof value === "number") {
-    return dayjs(value).tz(BUCURESTI_TZ);
+    return dayjs(value).tz();
   }
 
   if (typeof value === "object") {
-    if (value.seconds !== undefined && value.nanoseconds !== undefined) {
-      return dayjs
-        .unix(value.seconds + value.nanoseconds / 1_000_000_000)
-        .tz(BUCURESTI_TZ);
+    if (value.seconds !== undefined) {
+      const nanos = value.nanoseconds ?? value._nanoseconds ?? 0;
+      return dayjs.unix(value.seconds).add(Math.floor(nanos / 1_000_000), "millisecond").tz();
     }
-
-    if (value._seconds !== undefined && value._nanoseconds !== undefined) {
-      return dayjs
-        .unix(value._seconds + value._nanoseconds / 1_000_000_000)
-        .tz(BUCURESTI_TZ);
+    if (value._seconds !== undefined) {
+      const nanos = value._nanoseconds ?? value.nanoseconds ?? 0;
+      return dayjs.unix(value._seconds).add(Math.floor(nanos / 1_000_000), "millisecond").tz();
     }
   }
 
   if (typeof value === "string") {
-    if (value.includes("T")) {
-      const asUtc = dayjs.utc(value);
-      return asUtc.isValid() ? asUtc.tz(BUCURESTI_TZ) : dayjs.invalid();
+    const trimmed = value.trim();
+    if (trimmed.includes("T")) {
+      return dayjs(trimmed).tz();
     }
-
-    if (value.includes("/")) {
-      return dayjs.tz(value, "DD/MM/YYYY", BUCURESTI_TZ);
+    if (trimmed.includes("/")) {
+      return dayjs.tz(trimmed, "DD/MM/YYYY", BUCURESTI_TZ);
     }
-
-    if (value.includes("-")) {
-      return dayjs.tz(value, "YYYY-MM-DD", BUCURESTI_TZ);
+    if (trimmed.includes("-")) {
+      return dayjs.tz(trimmed, "YYYY-MM-DD", BUCURESTI_TZ);
     }
+    return dayjs(trimmed).tz();
   }
 
-  const parsed = dayjs(value);
-  return parsed.isValid() ? parsed.tz(BUCURESTI_TZ) : dayjs.invalid();
+  return dayjs(value).tz();
 };
 
 const formatBucharestDate = (value, formatStr = "DD/MM/YYYY") => {
