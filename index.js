@@ -25,6 +25,7 @@ import notificationRoutes from "./src/routes/notificationRoutes.js";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
+dayjs.tz.setDefault("Europe/Bucharest");
 app.set('trust proxy', 1);
 
 app.use(bodyParser.json({ limit: "1500mb" }));

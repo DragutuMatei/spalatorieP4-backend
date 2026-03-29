@@ -16,6 +16,7 @@ const IN_QUERY_LIMIT = 10;
 dayjs.extend(utc);
 dayjs.extend(timezone);
 dayjs.extend(customParseFormat);
+dayjs.tz.setDefault("Europe/Bucharest");
 
 const parseBookingDate = (value) => {
   if (value === undefined || value === null) {
