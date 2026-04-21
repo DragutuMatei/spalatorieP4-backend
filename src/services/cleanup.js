@@ -400,60 +400,76 @@ const startWeeklyProgramariCleanup = () => {
 };
 
 const deleteExpiredDryerBookings = async (scope = "auto") => {
-  const CUTOFF_MINUTES = 3;
   const now = dayjs().tz(BUCURESTI_TZ).valueOf();
-  const cutoffTimestamp = now - CUTOFF_MINUTES * 60 * 1000;
 
   try {
     const snapshot = await getCollectionWithScope("programari", scope)
       .where("machine", "==", "Uscator")
-      .where("endsAt", "<=", cutoffTimestamp)
+      .where("active.status", "==", true)
+      .where("endsAt", "<=", now)
       .get();
 
     if (snapshot.empty) {
-      return { deletedCount: 0 };
+      return { processedCount: 0 };
     }
 
-    const bookingsToDelete = [];
+    const bookingsToUpdate = [];
     snapshot.forEach((doc) => {
-      bookingsToDelete.push({
+      bookingsToUpdate.push({
         id: doc.id,
         ref: doc.ref,
         data: doc.data(),
       });
     });
 
-    if (!bookingsToDelete.length) {
-      return { deletedCount: 0 };
-    }
-
-    // Delete in batches
-    for (const chunk of chunkArray(bookingsToDelete, MAX_BATCH_SIZE)) {
+    // Update to inactive in batches
+    for (const chunk of chunkArray(bookingsToUpdate, MAX_BATCH_SIZE)) {
       const batch = createBatch();
-      chunk.forEach((booking) => batch.delete(booking.ref));
+      chunk.forEach((booking) => {
+        batch.update(booking.ref, {
+          active: {
+            status: false,
+            message: "Program uscător finalizat automat (cleanup)",
+            expiredAt: new Date(),
+          },
+        });
+      });
       await batch.commit();
     }
 
     const io = getIO();
-    bookingsToDelete.forEach((booking) => {
-      io.emit("programare", { action: "delete", programareId: booking.id });
+    bookingsToUpdate.forEach((booking) => {
+      const updatedData = {
+        ...booking.data,
+        uid: booking.id,
+        active: {
+          status: false,
+          message: "Program uscător finalizat automat (cleanup)",
+          expiredAt: new Date(),
+        },
+      };
+      io.emit("programare", { action: "update", programare: updatedData });
     });
 
-    // Also delete associated notifications
-    await deleteNotificationsLinkedToBookings(bookingsToDelete, scope);
+    // După ce le-am marcat pe toate ca inactive, lăsăm logica de curățare din programari.js
+    // să păstreze doar ultima rezervare inactivă. 
+    // Acest cleanup se ocupă doar de TRANSFORMAREA celor active în inactive la timp.
+
+    // Ștergem notificările asociate programărilor care au expirat
+    await deleteNotificationsLinkedToBookings(bookingsToUpdate, scope);
 
     console.log(
-      `[Cleanup] Deleted ${bookingsToDelete.length} expired dryer bookings.`
+      `[Cleanup] Processed ${bookingsToUpdate.length} expired dryer bookings (marked as inactive).`
     );
-    return { deletedCount: bookingsToDelete.length };
+
+    return { processedCount: bookingsToUpdate.length };
   } catch (error) {
-    console.error("[Cleanup] Failed to delete expired dryer bookings:", error);
-    return { deletedCount: 0 };
+    console.error("[Cleanup] Failed to process expired dryer bookings:", error);
+    return { processedCount: 0 };
   }
 };
 
 export {
   startWeeklyProgramariCleanup,
   deleteProgramariOlderThanThreeDays,
-  deleteExpiredDryerBookings,
 };

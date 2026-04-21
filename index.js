@@ -19,7 +19,6 @@ import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
 import {
   startWeeklyProgramariCleanup,
-  deleteExpiredDryerBookings,
 } from "./src/services/cleanup.js";
 import notificationRoutes from "./src/routes/notificationRoutes.js";
 
@@ -122,12 +121,7 @@ const cleanExpiredReservations = () => {
 
 // Curățarea automată la fiecare 2 minute
 setInterval(cleanExpiredReservations, 1 * 60 * 1000);
-
-// Curățarea automată a programărilor la uscător expirate (la fiecare 1 minut)
-setInterval(async () => {
-  await deleteExpiredDryerBookings();
-}, 60 * 1000);
-
+ 
 // Endpoint pentru generarea fișierului .ics
 app.get("/generate-ics", (req, res) => {
   const { machine, date, startTime, duration, room, fullName } = req.query;

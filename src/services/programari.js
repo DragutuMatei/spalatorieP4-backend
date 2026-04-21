@@ -262,8 +262,19 @@ const getProgramareByUserUid = async (req, res) => {
 
     const programari = [];
     snapshot.forEach((doc) => {
-      programari.push({ uid: doc.id, ...doc.data() });
+      const data = doc.data();
+      if (!data.hiddenForUser) {
+        programari.push({ uid: doc.id, ...data });
+      }
     });
+
+    if (programari.length === 0) {
+      return {
+        code: 404,
+        success: false,
+        message: "No visible programari found for this user",
+      };
+    }
 
     programari.sort((a, b) => {
       const dateA = dayjs(a.date, "DD/MM/YYYY");
@@ -818,8 +829,52 @@ const deleteProgramare = async (req, res) => {
     }
 
     const bookingData = bookingDoc.data();
+    const isDryer = bookingData.machine === DRYER_MACHINE;
+    const isAlreadyInactive = bookingData.active?.status === false;
 
-    await programareRef.delete();
+    if (isDryer && !isAlreadyInactive) {
+      // Soft delete for ACTIVE dryer booking: just set active status to false
+      // This preserves it for the 'Last Used' query until the NEXT one replaces it
+      const updatedActiveState = {
+        status: false,
+        message: "Anulat de utilizator",
+        cancelledAt: new Date(),
+      };
+      await programareRef.update({ active: updatedActiveState });
+
+      // Clean up other inactive dryer bookings so we only keep the latest
+      getCollection("programari")
+        .where("machine", "==", DRYER_MACHINE)
+        .where("active.status", "==", false)
+        .get()
+        .then((snapshot) => {
+          snapshot.forEach((inactiveDoc) => {
+            if (inactiveDoc.id !== uid) {
+              inactiveDoc.ref.delete().catch(err => console.error("Failed to delete old inactive dryer booking", err));
+            }
+          });
+        })
+        .catch(err => console.error("Error finding old inactive dryer bookings", err));
+
+      // Emit update instead of delete so frontend can reflect status change
+      const updatedBooking = { ...bookingData, uid, active: updatedActiveState };
+      getIO().emit("programare", { action: "update", programare: updatedBooking });
+    } else if (isDryer && isAlreadyInactive) {
+      // Nu ștergem din DB pentru a păstra istoricul "Ultima utilizare"
+      // Îl marcăm doar ca ascuns pentru ca utilizatorul să nu îl mai vadă în "Programările mele"
+      await programareRef.update({ hiddenForUser: true });
+      
+      getIO().emit("programare", { action: "delete", programareId: uid });
+      return {
+        code: 200,
+        success: true,
+        message: "Programare ascunsă din listă (istoric păstrat)",
+      };
+    } else {
+      // Hard delete pentru M1/M2
+      await programareRef.delete();
+      getIO().emit("programare", { action: "delete", programareId: uid });
+    }
 
     const userUid = bookingData.user?.uid;
     let userEmail = bookingData.user?.email || "";
@@ -867,12 +922,13 @@ const deleteProgramare = async (req, res) => {
       );
     }
 
-    getIO().emit("programare", { action: "delete", programareId: uid });
+    // Handled above for dryer (update) vs M1/M2 (delete)
+    // getIO().emit("programare", { action: "delete", programareId: uid });
 
     return {
       code: 200,
       success: true,
-      message: "Programare deleted successfully",
+      message: bookingData.machine === DRYER_MACHINE ? "Programare marked as inactive successfully" : "Programare deleted successfully",
     };
   } catch (error) {
     console.error("Error deleting programare:", error);
