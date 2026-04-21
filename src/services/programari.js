@@ -69,6 +69,8 @@ const saveProgramare = async (req, res) => {
   const { programareData } = req.body;
 
   try {
+    let userRole = "user";
+
     if (!programareData?.machine) {
       return {
         code: 400,
@@ -84,6 +86,7 @@ const saveProgramare = async (req, res) => {
           const userDoc = await getCollection("users").doc(userUid).get();
           if (userDoc.exists) {
             const userData = userDoc.data();
+            userRole = userData.role || "user";
             if (!programareData.user.telefon && userData.telefon) {
               programareData.user.telefon = userData.telefon;
             }
@@ -144,6 +147,45 @@ const saveProgramare = async (req, res) => {
         programareData.start_interval_time,
         programareData.final_interval_time
       );
+
+      // Verificare limită de 4 intervale (2 ore) pe zi per mașină pentru userii normali
+      if (userRole !== "admin" && programareData.user?.uid) {
+        const targetDate = programareData.date;
+        const programariRef = getCollection("programari")
+          .where("user.uid", "==", programareData.user.uid)
+          .where("machine", "==", programareData.machine)
+          .where("active.status", "==", true);
+        
+        const snapshot = await programariRef.get();
+        let existingIntervals = 0;
+        
+        const parseTimeToMinutesLocal = (timeStr) => {
+          if (!timeStr) return 0;
+          const [hours, minutes] = timeStr.split(":").map(Number);
+          return hours * 60 + minutes;
+        };
+
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          if (data.date === targetDate) {
+            const startMins = parseTimeToMinutesLocal(data.start_interval_time);
+            const endMins = parseTimeToMinutesLocal(data.final_interval_time);
+            existingIntervals += (endMins - startMins) / 30;
+          }
+        });
+
+        const newStartMins = parseTimeToMinutesLocal(programareData.start_interval_time);
+        const newEndMins = parseTimeToMinutesLocal(programareData.final_interval_time);
+        const newIntervals = (newEndMins - newStartMins) / 30;
+
+        if (existingIntervals + newIntervals > 4) {
+          return {
+            code: 403,
+            success: false,
+            message: "Ai atins limita de 2 ore (4 intervale) pe zi pentru această mașină.",
+          };
+        }
+      }
     }
 
     // Verificăm dacă există conflict de programare
@@ -490,6 +532,22 @@ const getAllProgramari = async (req, res) => {
 
           try {
             await doc.ref.update({ active: updatedActiveState });
+            
+            // Delete old inactive dryer bookings to keep DB clean
+            getCollection("programari")
+              .where("machine", "==", DRYER_MACHINE)
+              .where("active.status", "==", false)
+              .get()
+              .then((snapshot) => {
+                snapshot.forEach((inactiveDoc) => {
+                  if (inactiveDoc.id !== doc.id) {
+                    inactiveDoc.ref.delete().catch(err => console.error("Failed to delete old inactive dryer booking", err));
+                    getIO().emit("programare", { action: "delete", programareId: inactiveDoc.id });
+                  }
+                });
+              })
+              .catch(err => console.error("Error finding old inactive dryer bookings", err));
+
             const expiredProgramare = {
               uid: doc.id,
               ...data,
@@ -1185,6 +1243,25 @@ const runManualCleanup = async (req, res) => {
   }
 };
 
+const getLastDryerBooking = async (req, res) => {
+  try {
+    const programariRef = getCollection("programari")
+      .where("machine", "==", DRYER_MACHINE)
+      .orderBy("startsAt", "desc")
+      .limit(1);
+
+    const snapshot = await programariRef.get();
+    if (snapshot.empty) {
+      return { code: 200, success: true, booking: null };
+    }
+    const booking = { uid: snapshot.docs[0].id, ...snapshot.docs[0].data() };
+    return { code: 200, success: true, booking };
+  } catch (error) {
+    console.error("Error getting last dryer booking:", error);
+    return { code: 500, success: false, message: "Error", error: error.message };
+  }
+};
+
 export {
   saveProgramare,
   getAllProgramari,
@@ -1195,4 +1272,5 @@ export {
   cancelProgramareWithReason,
   getFilteredBookings,
   runManualCleanup,
+  getLastDryerBooking,
 };
