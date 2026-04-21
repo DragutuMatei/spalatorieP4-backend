@@ -137,6 +137,7 @@ import {
   cancelProgramareWithReason,
   getFilteredBookings,
   runManualCleanup,
+  getLastDryerBooking,
 } from "../services/programari.js";
 import { getIO } from "../utils/socket.js";
 
@@ -219,6 +220,11 @@ const triggerManualCleanupController = async (req, res) => {
   handleResponse(res, result);
 };
 
+const getLastDryerBookingController = async (req, res) => {
+  const result = await getLastDryerBooking(req, res);
+  handleResponse(res, result);
+};
+
 export {
   saveProgramareController,
   getAllProgramariController,
@@ -229,4 +235,5 @@ export {
   cancelProgramareWithReasonController,
   getFilteredBookingsController,
   triggerManualCleanupController,
+  getLastDryerBookingController,
 };

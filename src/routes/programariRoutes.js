@@ -10,6 +10,7 @@ import {
   cancelProgramareWithReasonController,
   getFilteredBookingsController,
   triggerManualCleanupController,
+  getLastDryerBookingController,
 } from "../controllers/programariController.js";
 
 const programariRoutes = express.Router();
@@ -25,5 +26,6 @@ programariRoutes.post("/programare/delete-with-reason", deleteProgramareWithReas
 programariRoutes.post("/programare/cancel-with-reason", cancelProgramareWithReasonController);
 programariRoutes.get("/bookings/filtered", getFilteredBookingsController);
 programariRoutes.post("/programari/cleanup", triggerManualCleanupController);
+programariRoutes.get("/programare/uscator/last", getLastDryerBookingController);
 
 export default programariRoutes;
