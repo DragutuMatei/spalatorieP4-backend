@@ -105,23 +105,47 @@ const dryerLiveSelections = new Map();
 // Funcție pentru curățarea rezervărilor expirate (opțional)
 const cleanExpiredReservations = () => {
   const now = Date.now();
-  const EXPIRATION_TIME = 0.5 * 60 * 1000; // 15 minute
+  const EXPIRATION_TIME = 10 * 60 * 1000; // 10 minute
 
+  let deletedTemp = 0;
+  let deletedDryer = 0;
+
+  // Curățare rezervări temporare (mașini de spălat)
   for (const [userId, reservation] of tempReservations.entries()) {
     if (
       reservation.timestamp &&
       now - reservation.timestamp > EXPIRATION_TIME
     ) {
       tempReservations.delete(userId);
+      console.log(`[Cleanup] Temp reservation for user ${userId} expired.`);
+      deletedTemp++;
       // Notifică toți clienții că rezervarea a expirat
       io.emit("cancelTempReservation", { userId });
     }
   }
+
+  // Curățare selecții live uscător
+  for (const [userId, selection] of dryerLiveSelections.entries()) {
+    if (
+      selection.timestamp &&
+      now - selection.timestamp > EXPIRATION_TIME
+    ) {
+      dryerLiveSelections.delete(userId);
+      console.log(`[Cleanup] Dryer selection for user ${userId} expired.`);
+      deletedDryer++;
+      // Notifică toți clienții că selecția a expirat
+      io.emit("cancelDryerSelection", { userId });
+    }
+  }
+
+  if (deletedTemp > 0 || deletedDryer > 0) {
+    console.log(`[Cleanup] Removed ${deletedTemp} temp bookings and ${deletedDryer} dryer selections.`);
+  }
 };
 
-// Curățarea automată la fiecare 2 minute
-setInterval(cleanExpiredReservations, 1 * 60 * 1000);
- 
+// Curățarea automată la fiecare 10 secunde pentru feedback rapid în testare
+setInterval(cleanExpiredReservations, 10 * 1000);
+
 // Endpoint pentru generarea fișierului .ics
 app.get("/generate-ics", (req, res) => {
   const { machine, date, startTime, duration, room, fullName } = req.query;
@@ -245,15 +269,15 @@ io.on("connection", (socket) => {
 
   // Când cineva face o rezervare temporară
   socket.on("tempReservation", (data) => {
-
     if (data.userId && data.reservation) {
+      console.log(`[Socket] Temp reservation received for user ${data.userId}`);
       // Adaugă timestamp pentru expirare
       data.reservation.timestamp = Date.now();
 
       // Salvează rezervarea temporară
       tempReservations.set(data.userId, data.reservation);
 
-      // Notifică toți ceilalți clienți conectați
+      // Notifică toți ceilalți clienții conectați
       socket.broadcast.emit("tempReservation", data);
     }
   });
@@ -274,6 +298,10 @@ io.on("connection", (socket) => {
     if (!data?.userId || !data.selection) {
       return;
     }
+
+    console.log(`[Socket] Dryer selection received for user ${data.userId}`);
+    // Adaugă timestamp pentru expirare
+    data.selection.timestamp = Date.now();
 
     dryerLiveSelections.set(data.userId, data.selection);
     socket.broadcast.emit("dryerSelection", data);
