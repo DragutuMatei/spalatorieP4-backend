@@ -43,10 +43,11 @@ app.use(helmet());
 
 // CORS strict
 const allowedOrigins = [
-  "http://localhost:3002",
-  "http://localhost:3000",
+  // "http://localhost:3002",
+  // "http://localhost:3000",
   "https://develop.spalatoriep4.osfiir.ro",
   "https://spalatoriep4.osfiir.ro",
+  "https://spalatorie-p25.osfiir.ro",
 ];
 app.use(
   cors({
