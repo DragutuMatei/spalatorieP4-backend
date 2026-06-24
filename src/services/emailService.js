@@ -75,7 +75,7 @@ const sendBookingConfirmationEmail = async (emailData) => {
     )}&fullName=${encodeURIComponent(fullName)}`;
 
     await transporter.sendMail({
-      from: '"Spălătorie Cămin" <spalatoriep4@osfiir.ro>',
+      from: '"Spălătorie Cămin" <spalatorieP25@osfiir.ro>',
       to,
       subject: `Rezervare ${machine} ${formattedDate} ${formattedTime}`,
       html: `
@@ -142,7 +142,7 @@ const sendDeletedBookingEmail = async (req, res) => {
     const displayDate = startDateTime.format("DD/MM/YYYY");
 
     await transporter.sendMail({
-      from: '"Spălătorie Cămin" <spalatoriep4@osfiir.ro>',
+      from: '"Spălătorie Cămin" <spalatorieP25@osfiir.ro>',
       to,
       subject: `Anulare Rezervare ${machine} ${formattedDate} ${formattedTime}`,
       html: `
@@ -222,7 +222,7 @@ const sendCancelledBookingEmail = async (req, res) => {
       message: "Cancelled booking email sent successfully",
       emailDetails: {
         to,
-        subject: "Programare anulată - Spălătorie P4",
+        subject: "Programare anulată - Spălătorie P25",
         sentAt: new Date(),
       },
     };

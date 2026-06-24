@@ -14,6 +14,8 @@ export const saveUserController = async (req, res) => {
       action: result.requiresReapproval ? "reapproval_required" : "profile_updated",
     });
     return res.status(200).json(result);
+  } else if (code === 409) {
+    return res.status(409).json(result);
   } else if (code === 500) {
     return res.status(500).json(result);
   } else {

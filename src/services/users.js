@@ -19,6 +19,34 @@ const saveUser = async (req, res) => {
     const existingData = existingUserDoc.exists ? existingUserDoc.data() : {};
     const dataToSave = { ...userData };
 
+    const normalizedCamera =
+      typeof dataToSave.camera === "string"
+        ? dataToSave.camera.trim()
+        : "";
+
+    if (normalizedCamera) {
+      dataToSave.camera = normalizedCamera;
+
+      const roomUsersSnapshot = await getCollection("users")
+        .where("camera", "==", normalizedCamera)
+        .get();
+
+      const otherUsersInRoom = roomUsersSnapshot.docs.filter(
+        (doc) => doc.id !== uid
+      );
+
+      const currentCamera = existingData.camera || "";
+      const isSameRoomAsBefore = currentCamera === normalizedCamera;
+
+      if (!isSameRoomAsBefore && otherUsersInRoom.length + 1 > 2) {
+        return {
+          code: 409,
+          success: false,
+          message: "Camera este deja ocupată de 2 persoane.",
+        };
+      }
+    }
+
     let requiresReapproval = false;
     if (existingUserDoc.exists && !req?.body?.preventOverwrite) {
       const sensitiveFields = ["numeComplet", "camera", "telefon"];
