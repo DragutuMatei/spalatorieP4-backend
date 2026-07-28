@@ -148,12 +148,11 @@ const saveProgramare = async (req, res) => {
         programareData.final_interval_time
       );
 
-      // Verificare limită de 4 intervale (2 ore) pe zi per mașină pentru userii normali
+      // Verificare limită de 4 intervale (2 ore) pe zi per cont pentru userii normali
       if (userRole !== "admin" && programareData.user?.uid) {
         const targetDate = programareData.date;
         const programariRef = getCollection("programari")
           .where("user.uid", "==", programareData.user.uid)
-          .where("machine", "==", programareData.machine)
           .where("active.status", "==", true);
         
         const snapshot = await programariRef.get();
@@ -182,7 +181,7 @@ const saveProgramare = async (req, res) => {
           return {
             code: 403,
             success: false,
-            message: "Ai atins limita de 2 ore (4 intervale) pe zi pentru această mașină.",
+            message: "Ai atins limita de 2 ore (4 intervale) pe zi per cont.",
           };
         }
       }
