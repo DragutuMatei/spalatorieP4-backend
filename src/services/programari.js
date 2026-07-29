@@ -148,9 +148,9 @@ const saveProgramare = async (req, res) => {
         programareData.final_interval_time
       );
 
-      // Verificare limită de 4 intervale (2 ore) pe zi per cont pentru userii normali
-      if (userRole !== "admin" && programareData.user?.uid) {
-        const targetDate = programareData.date;
+      // Verificare limită de 4 intervale (2 ore) pe zi per cont pentru utilizatorii cu rolul "user"
+      if (userRole === "user" && programareData.user?.uid) {
+        const targetDate = formatBucharestDate(programareData.date);
         const programariRef = getCollection("programari")
           .where("user.uid", "==", programareData.user.uid)
           .where("active.status", "==", true);
@@ -166,10 +166,13 @@ const saveProgramare = async (req, res) => {
 
         snapshot.forEach((doc) => {
           const data = doc.data();
-          if (data.date === targetDate) {
+          const docDate = formatBucharestDate(data.date);
+          if (docDate === targetDate) {
             const startMins = parseTimeToMinutesLocal(data.start_interval_time);
             const endMins = parseTimeToMinutesLocal(data.final_interval_time);
-            existingIntervals += (endMins - startMins) / 30;
+            if (endMins > startMins) {
+              existingIntervals += (endMins - startMins) / 30;
+            }
           }
         });
 
