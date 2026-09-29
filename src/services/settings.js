@@ -8,6 +8,10 @@ const saveSetting = async (key, value) => {
     const saveDoc = await settingsRef.get();
     const settingsData = saveDoc.data() || {};
 
+    if (settingsData.m3Enabled === undefined) {
+      settingsData.m3Enabled = true;
+    }
+
     if (settingsData.blockPastSlots === undefined) {
       settingsData.blockPastSlots = false;
     }
@@ -41,6 +45,7 @@ const getSettings = async () => {
         dryerEnabled: true,
         m1Enabled: true,
         m2Enabled: true,
+        m3Enabled: true,
         blockPastSlots: false,
       };
       await settingsRef.set(defaultSettings);
@@ -55,9 +60,23 @@ const getSettings = async () => {
 
     let settingsData = { uid: settings.id, ...data };
 
+    let needsUpdate = false;
+    const updates = {};
+
+    if (settingsData.m3Enabled === undefined) {
+      updates.m3Enabled = true;
+      settingsData.m3Enabled = true;
+      needsUpdate = true;
+    }
+
     if (settingsData.blockPastSlots === undefined) {
-      await settingsRef.set({ blockPastSlots: false }, { merge: true });
+      updates.blockPastSlots = false;
       settingsData.blockPastSlots = false;
+      needsUpdate = true;
+    }
+
+    if (needsUpdate) {
+      await settingsRef.set(updates, { merge: true });
     }
 
     return {
