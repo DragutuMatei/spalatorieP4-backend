@@ -404,7 +404,7 @@ const deleteExpiredDryerBookings = async (scope = "auto") => {
 
   try {
     const snapshot = await getCollectionWithScope("programari", scope)
-      .where("machine", "==", "Uscator")
+      .where("machine", "in", ["Uscator", "Uscator 1", "Uscator 2"])
       .where("active.status", "==", true)
       .where("endsAt", "<=", now)
       .get();

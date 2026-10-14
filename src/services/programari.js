@@ -17,6 +17,23 @@ dayjs.tz.setDefault("Europe/Bucharest");
 
 const BUCURESTI_TZ = "Europe/Bucharest";
 const DRYER_MACHINE = "Uscator";
+const DRYER_MACHINES = ["Uscator", "Uscator 1", "Uscator 2"];
+
+const isDryerMachine = (machine) => {
+  return (
+    machine === "Uscator" ||
+    machine === "Uscator 1" ||
+    machine === "Uscator 2" ||
+    (typeof machine === "string" && machine.startsWith("Uscator"))
+  );
+};
+
+const getDryerQueryMachines = (machine) => {
+  if (machine === "Uscator 1" || machine === "Uscator") {
+    return ["Uscator", "Uscator 1"];
+  }
+  return [machine];
+};
 
 const toBucharestDayjs = (value) => {
   if (value === undefined || value === null) {
@@ -101,7 +118,7 @@ const saveProgramare = async (req, res) => {
       }
     }
 
-    const isDryerBooking = programareData.machine === DRYER_MACHINE;
+    const isDryerBooking = isDryerMachine(programareData.machine);
 
     if (isDryerBooking) {
       const durationMinutes = Number(programareData.durationMinutes);
@@ -305,11 +322,14 @@ const checkForConflicts = async (date, startTime, endTime, machine) => {
   try {
     // Convertim data în format consistent pentru comparare
     const targetDate = formatBucharestDate(date);
+    const targetMachines = isDryerMachine(machine)
+      ? getDryerQueryMachines(machine)
+      : [machine];
 
     // Query pentru programările din aceeași zi
     const programariRef = getCollection("programari")
       .where("active.status", "==", true)
-      .where("machine", "==", machine);
+      .where("machine", "in", targetMachines);
 
     const snapshot = await programariRef.get();
 
@@ -326,7 +346,7 @@ const checkForConflicts = async (date, startTime, endTime, machine) => {
         const programare = doc.data();
 
         if (
-          machine === DRYER_MACHINE &&
+          isDryerMachine(programare.machine) &&
           programare.active?.status &&
           typeof programare.endsAt === "number" &&
           programare.endsAt <= now
@@ -379,9 +399,9 @@ const checkForConflicts = async (date, startTime, endTime, machine) => {
 
     let maintenanceConflicts = [];
 
-    if (machine === DRYER_MACHINE) {
+    if (isDryerMachine(machine)) {
       const maintenanceRef = getCollection("maintenance")
-        .where("machine", "==", DRYER_MACHINE)
+        .where("machine", "in", targetMachines)
         .where("date", "==", targetDate);
 
       const maintenanceSnapshot = await maintenanceRef.get();
@@ -475,7 +495,7 @@ const getAllProgramari = async (req, res) => {
         // Exception: Always include active dryer bookings regardless of date
         // so the frontend knows the dryer is busy right now.
         let isActiveDryer =
-          data.machine === DRYER_MACHINE &&
+          isDryerMachine(data.machine) &&
           data.active &&
           data.active.status === true;
 
@@ -516,7 +536,7 @@ const getAllProgramari = async (req, res) => {
       const isActive = data.active && data.active.status === true;
 
       // Logic for auto-expiring dryer bookings (only if they appear active)
-      if (isActive && data.machine === DRYER_MACHINE) {
+      if (isActive && isDryerMachine(data.machine)) {
         let endsAtMillis = Number.isFinite(data.endsAt) ? data.endsAt : null;
         if (!Number.isFinite(endsAtMillis) && Number.isFinite(data.endTimestamp)) {
           endsAtMillis = data.endTimestamp;
@@ -547,8 +567,9 @@ const getAllProgramari = async (req, res) => {
             await doc.ref.update({ active: updatedActiveState });
             
             // Delete old inactive dryer bookings to keep DB clean
+            const targetMachines = getDryerQueryMachines(data.machine);
             getCollection("programari")
-              .where("machine", "==", DRYER_MACHINE)
+              .where("machine", "in", targetMachines)
               .where("active.status", "==", false)
               .get()
               .then((snapshot) => {
@@ -731,9 +752,13 @@ const checkForConflictsExcluding = async (
   try {
     const targetDate = formatBucharestDate(date);
 
+    const targetMachines = isDryerMachine(machine)
+      ? getDryerQueryMachines(machine)
+      : [machine];
+
     const programariRef = getCollection("programari")
       .where("active.status", "==", true)
-      .where("machine", "==", machine);
+      .where("machine", "in", targetMachines);
 
     const snapshot = await programariRef.get();
 
@@ -754,7 +779,7 @@ const checkForConflictsExcluding = async (
         const programare = doc.data();
 
         if (
-          machine === DRYER_MACHINE &&
+          isDryerMachine(machine) &&
           programare.active?.status &&
           typeof programare.endsAt === "number" &&
           programare.endsAt <= now
@@ -831,7 +856,7 @@ const deleteProgramare = async (req, res) => {
     }
 
     const bookingData = bookingDoc.data();
-    const isDryer = bookingData.machine === DRYER_MACHINE;
+    const isDryer = isDryerMachine(bookingData.machine);
     const isAlreadyInactive = bookingData.active?.status === false;
 
     if (isDryer && !isAlreadyInactive) {
@@ -845,8 +870,9 @@ const deleteProgramare = async (req, res) => {
       await programareRef.update({ active: updatedActiveState });
 
       // Clean up other inactive dryer bookings so we only keep the latest
+      const targetMachines = getDryerQueryMachines(bookingData.machine);
       getCollection("programari")
-        .where("machine", "==", DRYER_MACHINE)
+        .where("machine", "in", targetMachines)
         .where("active.status", "==", false)
         .get()
         .then((snapshot) => {
@@ -873,7 +899,7 @@ const deleteProgramare = async (req, res) => {
         message: "Programare ascunsă din listă (istoric păstrat)",
       };
     } else {
-      // Hard delete pentru M1/M2
+      // Hard delete pentru M1/M2/M3
       await programareRef.delete();
       getIO().emit("programare", { action: "delete", programareId: uid });
     }
@@ -930,7 +956,7 @@ const deleteProgramare = async (req, res) => {
     return {
       code: 200,
       success: true,
-      message: bookingData.machine === DRYER_MACHINE ? "Programare marked as inactive successfully" : "Programare deleted successfully",
+      message: isDryer ? "Programare marked as inactive successfully" : "Programare deleted successfully",
     };
   } catch (error) {
     console.error("Error deleting programare:", error);
@@ -1303,16 +1329,28 @@ const runManualCleanup = async (req, res) => {
 
 const getLastDryerBooking = async (req, res) => {
   try {
-    const programariRef = getCollection("programari")
-      .where("machine", "==", DRYER_MACHINE)
-      .orderBy("startsAt", "desc")
-      .limit(1);
+    const requestedMachine = req.query?.machine || req.params?.machine || "Uscator 1";
+    const targetMachines = getDryerQueryMachines(requestedMachine);
 
-    const snapshot = await programariRef.get();
-    if (snapshot.empty) {
+    // Query for each candidate machine to avoid composite index requirements with 'in' and 'orderBy'
+    const docs = [];
+    for (const m of targetMachines) {
+      const snap = await getCollection("programari")
+        .where("machine", "==", m)
+        .orderBy("startsAt", "desc")
+        .limit(1)
+        .get();
+      if (!snap.empty) {
+        docs.push(snap.docs[0]);
+      }
+    }
+
+    if (docs.length === 0) {
       return { code: 200, success: true, booking: null };
     }
-    const booking = { uid: snapshot.docs[0].id, ...snapshot.docs[0].data() };
+
+    docs.sort((a, b) => (b.data().startsAt || 0) - (a.data().startsAt || 0));
+    const booking = { uid: docs[0].id, ...docs[0].data() };
     return { code: 200, success: true, booking };
   } catch (error) {
     console.error("Error getting last dryer booking:", error);

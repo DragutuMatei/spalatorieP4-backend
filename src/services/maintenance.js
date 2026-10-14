@@ -21,9 +21,14 @@ const addMaintenanceInterval = async (req, res) => {
     const createdMaintenanceRecords = [];
     const allCancelledBookings = [];
 
+    const targetMachines =
+      machine === "Uscator 1" || machine === "Uscator"
+        ? ["Uscator", "Uscator 1"]
+        : [machine];
+
     // Find and delete any existing maintenance intervals that overlap with these dates
     const existingMaintenanceRef = await getCollection("maintenance")
-      .where("machine", "==", machine)
+      .where("machine", "in", targetMachines)
       .get();
 
     if (!existingMaintenanceRef.empty) {
@@ -62,7 +67,7 @@ const addMaintenanceInterval = async (req, res) => {
     for (const maintenanceDate of datesToProcess) {
       // Find conflicting bookings for current machine and date
       const programariRef = getCollection("programari")
-        .where("machine", "==", machine)
+        .where("machine", "in", targetMachines)
         .where("active.status", "==", true);
 
       const snapshot = await programariRef.get();

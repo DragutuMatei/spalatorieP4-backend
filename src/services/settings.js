@@ -8,6 +8,10 @@ const saveSetting = async (key, value) => {
     const saveDoc = await settingsRef.get();
     const settingsData = saveDoc.data() || {};
 
+    if (settingsData.dryer2Enabled === undefined) {
+      settingsData.dryer2Enabled = true;
+    }
+
     if (settingsData.blockPastSlots === undefined) {
       settingsData.blockPastSlots = false;
     }
@@ -39,6 +43,7 @@ const getSettings = async () => {
       // Creez setările default dacă nu există
       const defaultSettings = {
         dryerEnabled: true,
+        dryer2Enabled: true,
         m1Enabled: true,
         m2Enabled: true,
         blockPastSlots: false,
@@ -55,9 +60,23 @@ const getSettings = async () => {
 
     let settingsData = { uid: settings.id, ...data };
 
+    let needsUpdate = false;
+    const updates = {};
+
+    if (settingsData.dryer2Enabled === undefined) {
+      updates.dryer2Enabled = true;
+      settingsData.dryer2Enabled = true;
+      needsUpdate = true;
+    }
+
     if (settingsData.blockPastSlots === undefined) {
-      await settingsRef.set({ blockPastSlots: false }, { merge: true });
+      updates.blockPastSlots = false;
       settingsData.blockPastSlots = false;
+      needsUpdate = true;
+    }
+
+    if (needsUpdate) {
+      await settingsRef.set(updates, { merge: true });
     }
 
     return {
