@@ -33,13 +33,13 @@ const isDryerMachine = (machine) => {
 };
 
 const getDryerQueryMachines = (machine) => {
-  if (!machine || typeof machine !== "string") return ["Uscator", "Uscator 1"];
+  if (!machine || typeof machine !== "string") return ["Uscator", "Uscator 1", "uscator", "uscator 1", "uscator1"];
   const lower = machine.trim().toLowerCase();
   if (lower === "uscator 1" || lower === "uscator" || lower === "uscator1") {
-    return ["Uscator", "Uscator 1"];
+    return ["Uscator", "Uscator 1", "uscator", "uscator 1", "uscator1"];
   }
   if (lower === "uscator 2" || lower === "uscator2") {
-    return ["Uscator 2"];
+    return ["Uscator 2", "uscator 2", "uscator2"];
   }
   return [machine];
 };
@@ -75,9 +75,15 @@ const toBucharestDayjs = (value) => {
       return dayjs(trimmed).tz();
     }
     if (trimmed.includes("/")) {
+      if (trimmed.includes(":") && trimmed.includes(" ")) {
+        return dayjs.tz(trimmed, ["DD/MM/YYYY HH:mm:ss", "DD/MM/YYYY HH:mm"], BUCURESTI_TZ);
+      }
       return dayjs.tz(trimmed, "DD/MM/YYYY", BUCURESTI_TZ);
     }
     if (trimmed.includes("-")) {
+      if (trimmed.includes(":") && trimmed.includes(" ")) {
+        return dayjs.tz(trimmed, ["YYYY-MM-DD HH:mm:ss", "YYYY-MM-DD HH:mm"], BUCURESTI_TZ);
+      }
       return dayjs.tz(trimmed, "YYYY-MM-DD", BUCURESTI_TZ);
     }
     return dayjs(trimmed).tz();
@@ -113,6 +119,12 @@ const saveProgramare = async (req, res) => {
           if (userDoc.exists) {
             const userData = userDoc.data();
             userRole = userData.role || "user";
+            if (!programareData.user.numeComplet && (userData.numeComplet || userData.displayName || userData.name)) {
+              programareData.user.numeComplet = userData.numeComplet || userData.displayName || userData.name;
+            }
+            if (!programareData.user.camera && userData.camera) {
+              programareData.user.camera = userData.camera;
+            }
             if (!programareData.user.telefon && userData.telefon) {
               programareData.user.telefon = userData.telefon;
             }
@@ -1433,15 +1445,23 @@ const getLastDryerBooking = async (req, res) => {
     const requestedMachine = req.query?.machine || req.params?.machine || "Uscator 1";
     const targetMachines = getDryerQueryMachines(requestedMachine);
 
-    const docs = [];
-    for (const m of targetMachines) {
-      try {
-        const snap = await getCollection("programari")
-          .where("machine", "==", m)
-          .get();
-        snap.forEach((d) => docs.push(d));
-      } catch (err) {
-        console.error("Error querying machine bookings:", m, err);
+    let docs = [];
+    try {
+      const snap = await getCollection("programari")
+        .where("machine", "in", targetMachines)
+        .get();
+      snap.forEach((d) => docs.push(d));
+    } catch (queryErr) {
+      console.warn("Direct 'in' query failed in getLastDryerBooking, falling back:", queryErr);
+      for (const m of targetMachines) {
+        try {
+          const snap = await getCollection("programari")
+            .where("machine", "==", m)
+            .get();
+          snap.forEach((d) => docs.push(d));
+        } catch (err) {
+          console.error("Error querying machine bookings:", m, err);
+        }
       }
     }
 
@@ -1453,12 +1473,41 @@ const getLastDryerBooking = async (req, res) => {
       const data = d.data();
       if (Number.isFinite(data.startsAt)) return data.startsAt;
       if (Number.isFinite(data.startTimestamp)) return data.startTimestamp;
-      const day = toBucharestDayjs(`${data.date} ${data.start_interval_time}`);
-      return day.isValid() ? day.valueOf() : (data.createdAt || 0);
+      if (data.date && data.start_interval_time) {
+        const day = dayjs.tz(`${data.date} ${data.start_interval_time}`, "DD/MM/YYYY HH:mm", BUCURESTI_TZ);
+        if (day.isValid()) return day.valueOf();
+      }
+      if (data.createdAt) {
+        const createdDay = toBucharestDayjs(data.createdAt);
+        if (createdDay.isValid()) return createdDay.valueOf();
+      }
+      return 0;
     };
 
     docs.sort((a, b) => parseBookingTime(b) - parseBookingTime(a));
-    const booking = { uid: docs[0].id, ...docs[0].data() };
+    const latestDoc = docs[0];
+    const bookingData = latestDoc.data();
+    let bookingUser = bookingData.user || {};
+
+    if (bookingUser.uid) {
+      try {
+        const userDoc = await getCollection("users").doc(bookingUser.uid).get();
+        if (userDoc.exists) {
+          const uData = userDoc.data();
+          bookingUser = {
+            ...bookingUser,
+            numeComplet: uData.numeComplet || uData.displayName || uData.name || bookingUser.numeComplet || "",
+            camera: uData.camera || bookingUser.camera || "",
+            telefon: uData.telefon || bookingUser.telefon || "",
+            email: uData.google?.email || uData.email || bookingUser.email || "",
+          };
+        }
+      } catch (err) {
+        console.warn("Unable to enrich last dryer user:", err);
+      }
+    }
+
+    const booking = { uid: latestDoc.id, ...bookingData, user: bookingUser };
     return { code: 200, success: true, booking };
   } catch (error) {
     console.error("Error getting last dryer booking:", error);

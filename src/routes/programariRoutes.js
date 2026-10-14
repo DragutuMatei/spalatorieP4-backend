@@ -17,6 +17,7 @@ const programariRoutes = express.Router();
 
 programariRoutes.post("/programare", saveProgramareController);
 programariRoutes.get("/programare", getAllProgramariController);
+programariRoutes.get("/programare/uscator/last", getLastDryerBookingController);
 programariRoutes.get("/programare/:uid", getProgramareByUserUidController);
 programariRoutes.put("/programare/:uid", updateProgramareController);
 programariRoutes.delete("/programare/:uid", deleteProgramareController);
@@ -26,6 +27,5 @@ programariRoutes.post("/programare/delete-with-reason", deleteProgramareWithReas
 programariRoutes.post("/programare/cancel-with-reason", cancelProgramareWithReasonController);
 programariRoutes.get("/bookings/filtered", getFilteredBookingsController);
 programariRoutes.post("/programari/cleanup", triggerManualCleanupController);
-programariRoutes.get("/programare/uscator/last", getLastDryerBookingController);
 
 export default programariRoutes;

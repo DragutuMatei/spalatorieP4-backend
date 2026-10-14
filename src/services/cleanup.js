@@ -46,17 +46,24 @@ const parseBookingDate = (value) => {
   }
 
   if (typeof value === "string") {
-    if (value.includes("T")) {
-      const asUtc = dayjs.utc(value);
+    const trimmed = value.trim();
+    if (trimmed.includes("T")) {
+      const asUtc = dayjs.utc(trimmed);
       return asUtc.isValid() ? asUtc.tz(BUCURESTI_TZ) : dayjs.invalid();
     }
 
-    if (value.includes("/")) {
-      return dayjs.tz(value, "DD/MM/YYYY", BUCURESTI_TZ);
+    if (trimmed.includes("/")) {
+      if (trimmed.includes(":") && trimmed.includes(" ")) {
+        return dayjs.tz(trimmed, ["DD/MM/YYYY HH:mm:ss", "DD/MM/YYYY HH:mm"], BUCURESTI_TZ);
+      }
+      return dayjs.tz(trimmed, "DD/MM/YYYY", BUCURESTI_TZ);
     }
 
-    if (value.includes("-")) {
-      return dayjs.tz(value, "YYYY-MM-DD", BUCURESTI_TZ);
+    if (trimmed.includes("-")) {
+      if (trimmed.includes(":") && trimmed.includes(" ")) {
+        return dayjs.tz(trimmed, ["YYYY-MM-DD HH:mm:ss", "YYYY-MM-DD HH:mm"], BUCURESTI_TZ);
+      }
+      return dayjs.tz(trimmed, "YYYY-MM-DD", BUCURESTI_TZ);
     }
   }
 
@@ -404,65 +411,146 @@ const deleteExpiredDryerBookings = async (scope = "auto") => {
 
   try {
     const snapshot = await getCollectionWithScope("programari", scope)
-      .where("machine", "in", ["Uscator", "Uscator 1", "Uscator 2"])
-      .where("active.status", "==", true)
-      .where("endsAt", "<=", now)
+      .where("machine", "in", [
+        "Uscator",
+        "Uscator 1",
+        "uscator",
+        "uscator 1",
+        "uscator1",
+        "Uscator 2",
+        "uscator 2",
+        "uscator2",
+      ])
       .get();
 
     if (snapshot.empty) {
       return { processedCount: 0 };
     }
 
-    const bookingsToUpdate = [];
+    const io = getIO();
+    const activeExpired = [];
+    const inactiveByMachine = {
+      uscator1: [],
+      uscator2: [],
+    };
+
+    const normalizeMachineKey = (machine) => {
+      const m = String(machine || "").toLowerCase();
+      if (m.includes("2")) return "uscator2";
+      return "uscator1";
+    };
+
     snapshot.forEach((doc) => {
-      bookingsToUpdate.push({
-        id: doc.id,
-        ref: doc.ref,
-        data: doc.data(),
-      });
+      const data = doc.data();
+      const machineKey = normalizeMachineKey(data.machine);
+
+      const isActive =
+        data.active?.status === true ||
+        data.active === true ||
+        (data.active === undefined && !data.cancelled);
+
+      let endsAtMillis = Number.isFinite(data.endsAt) ? data.endsAt : null;
+      if (!Number.isFinite(endsAtMillis) && Number.isFinite(data.endTimestamp)) {
+        endsAtMillis = data.endTimestamp;
+      }
+      if (!Number.isFinite(endsAtMillis)) {
+        const bDate = parseBookingDate(data.date);
+        const dateStr = bDate.isValid() ? bDate.format("DD/MM/YYYY") : "";
+        if (dateStr && data.final_interval_time) {
+          const endCandidate = dayjs.tz(
+            `${dateStr} ${data.final_interval_time}`,
+            "DD/MM/YYYY HH:mm",
+            BUCURESTI_TZ
+          );
+          if (endCandidate.isValid()) endsAtMillis = endCandidate.valueOf();
+        }
+      }
+
+      let startsAtMillis = Number.isFinite(data.startsAt) ? data.startsAt : null;
+      if (!Number.isFinite(startsAtMillis) && Number.isFinite(data.startTimestamp)) {
+        startsAtMillis = data.startTimestamp;
+      }
+      if (!Number.isFinite(startsAtMillis)) {
+        const bDate = parseBookingDate(data.date);
+        const dateStr = bDate.isValid() ? bDate.format("DD/MM/YYYY") : "";
+        if (dateStr && data.start_interval_time) {
+          const startCandidate = dayjs.tz(
+            `${dateStr} ${data.start_interval_time}`,
+            "DD/MM/YYYY HH:mm",
+            BUCURESTI_TZ
+          );
+          if (startCandidate.isValid()) startsAtMillis = startCandidate.valueOf();
+        }
+      }
+
+      const sortTime =
+        endsAtMillis ||
+        startsAtMillis ||
+        (data.createdAt ? parseBookingDate(data.createdAt).valueOf() : 0);
+
+      if (isActive && Number.isFinite(endsAtMillis) && endsAtMillis <= now) {
+        activeExpired.push({ doc, data, machineKey, endsAtMillis, sortTime });
+      } else if (!isActive) {
+        inactiveByMachine[machineKey].push({ doc, data, endsAtMillis, sortTime });
+      }
     });
 
-    // Update to inactive in batches
-    for (const chunk of chunkArray(bookingsToUpdate, MAX_BATCH_SIZE)) {
-      const batch = createBatch();
-      chunk.forEach((booking) => {
-        batch.update(booking.ref, {
-          active: {
-            status: false,
-            message: "Program uscător finalizat automat (cleanup)",
-            expiredAt: new Date(),
-          },
+    if (activeExpired.length > 0) {
+      for (const item of activeExpired) {
+        const updatedActiveState = {
+          status: false,
+          message: "Program uscător finalizat automat",
+          expiredAt: new Date(),
+        };
+
+        try {
+          await item.doc.ref.update({ active: updatedActiveState });
+        } catch (err) {
+          console.error(`[Cleanup] Error updating expired dryer booking ${item.doc.id}:`, err);
+        }
+
+        const updatedData = {
+          ...item.data,
+          uid: item.doc.id,
+          active: updatedActiveState,
+        };
+
+        io.emit("programare", { action: "update", programare: updatedData });
+
+        inactiveByMachine[item.machineKey].push({
+          doc: item.doc,
+          data: updatedData,
+          endsAtMillis: item.endsAtMillis,
+          sortTime: item.sortTime,
         });
-      });
-      await batch.commit();
+      }
+
+      await deleteNotificationsLinkedToBookings(
+        activeExpired.map((i) => ({ id: i.doc.id, data: i.data })),
+        scope
+      );
+
+      console.log(`[Cleanup] Marked ${activeExpired.length} expired dryer booking(s) as inactive.`);
     }
 
-    const io = getIO();
-    bookingsToUpdate.forEach((booking) => {
-      const updatedData = {
-        ...booking.data,
-        uid: booking.id,
-        active: {
-          status: false,
-          message: "Program uscător finalizat automat (cleanup)",
-          expiredAt: new Date(),
-        },
-      };
-      io.emit("programare", { action: "update", programare: updatedData });
-    });
+    // Keep only the most recent completed booking per dryer, delete older ones
+    for (const key of Object.keys(inactiveByMachine)) {
+      const list = inactiveByMachine[key];
+      if (list.length > 1) {
+        list.sort((a, b) => (b.sortTime || 0) - (a.sortTime || 0));
+        const toDelete = list.slice(1);
+        for (const item of toDelete) {
+          try {
+            await item.doc.ref.delete();
+            io.emit("programare", { action: "delete", programareId: item.doc.id });
+          } catch (err) {
+            console.error(`[Cleanup] Error deleting older inactive dryer booking ${item.doc.id}:`, err);
+          }
+        }
+      }
+    }
 
-    // După ce le-am marcat pe toate ca inactive, lăsăm logica de curățare din programari.js
-    // să păstreze doar ultima rezervare inactivă. 
-    // Acest cleanup se ocupă doar de TRANSFORMAREA celor active în inactive la timp.
-
-    // Ștergem notificările asociate programărilor care au expirat
-    await deleteNotificationsLinkedToBookings(bookingsToUpdate, scope);
-
-    console.log(
-      `[Cleanup] Processed ${bookingsToUpdate.length} expired dryer bookings (marked as inactive).`
-    );
-
-    return { processedCount: bookingsToUpdate.length };
+    return { processedCount: activeExpired.length };
   } catch (error) {
     console.error("[Cleanup] Failed to process expired dryer bookings:", error);
     return { processedCount: 0 };
@@ -472,4 +560,5 @@ const deleteExpiredDryerBookings = async (scope = "auto") => {
 export {
   startWeeklyProgramariCleanup,
   deleteProgramariOlderThanThreeDays,
+  deleteExpiredDryerBookings,
 };

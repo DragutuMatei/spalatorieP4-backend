@@ -19,6 +19,7 @@ import utc from "dayjs/plugin/utc.js";
 import timezone from "dayjs/plugin/timezone.js";
 import {
   startWeeklyProgramariCleanup,
+  deleteExpiredDryerBookings,
 } from "./src/services/cleanup.js";
 import notificationRoutes from "./src/routes/notificationRoutes.js";
 
@@ -144,8 +145,15 @@ const cleanExpiredReservations = () => {
   }
 };
 
-// Curățarea automată la fiecare 10 secunde pentru feedback rapid în testare
-setInterval(cleanExpiredReservations, 10 * 1000);
+// Curățarea automată la fiecare 5 secunde pentru feedback rapid și eliberarea automată a uscătoarelor
+setInterval(async () => {
+  try {
+    cleanExpiredReservations();
+    await deleteExpiredDryerBookings();
+  } catch (err) {
+    console.error("[Cleanup] Error in periodic cleanup:", err);
+  }
+}, 5 * 1000);
 
 // Endpoint pentru generarea fișierului .ics
 app.get("/generate-ics", (req, res) => {
