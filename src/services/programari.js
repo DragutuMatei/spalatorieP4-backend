@@ -20,17 +20,26 @@ const DRYER_MACHINE = "Uscator";
 const DRYER_MACHINES = ["Uscator", "Uscator 1", "Uscator 2"];
 
 const isDryerMachine = (machine) => {
+  if (!machine || typeof machine !== "string") return false;
+  const lower = machine.trim().toLowerCase();
   return (
-    machine === "Uscator" ||
-    machine === "Uscator 1" ||
-    machine === "Uscator 2" ||
-    (typeof machine === "string" && machine.startsWith("Uscator"))
+    lower === "uscator" ||
+    lower === "uscator 1" ||
+    lower === "uscator1" ||
+    lower === "uscator 2" ||
+    lower === "uscator2" ||
+    lower.startsWith("uscator")
   );
 };
 
 const getDryerQueryMachines = (machine) => {
-  if (machine === "Uscator 1" || machine === "Uscator") {
+  if (!machine || typeof machine !== "string") return ["Uscator", "Uscator 1"];
+  const lower = machine.trim().toLowerCase();
+  if (lower === "uscator 1" || lower === "uscator" || lower === "uscator1") {
     return ["Uscator", "Uscator 1"];
+  }
+  if (lower === "uscator 2" || lower === "uscator2") {
+    return ["Uscator 2"];
   }
   return [machine];
 };
@@ -207,6 +216,16 @@ const saveProgramare = async (req, res) => {
       }
     }
 
+    if (!programareData.active || typeof programareData.active !== "object") {
+      programareData.active = {
+        status: true,
+        message: isDryerBooking ? "Program uscător activ" : "Programare nouă",
+        startedAt: new Date(),
+      };
+    } else if (programareData.active.status === undefined) {
+      programareData.active.status = true;
+    }
+
     // Verificăm dacă există conflict de programare
     const conflictCheck = await checkForConflicts(
       programareData.date,
@@ -283,6 +302,34 @@ const getProgramareByUserUid = async (req, res) => {
     snapshot.forEach((doc) => {
       const data = doc.data();
       if (!data.hiddenForUser) {
+        if (!data.active || typeof data.active !== "object") {
+          data.active = {
+            status: data.active === false ? false : true,
+            message: data.active === false ? "Anulată" : "Activă",
+          };
+        } else if (data.active.status === undefined) {
+          data.active.status = true;
+        }
+
+        if (isDryerMachine(data.machine)) {
+          if (!Number.isFinite(data.startsAt)) {
+            if (Number.isFinite(data.startTimestamp)) {
+              data.startsAt = data.startTimestamp;
+            } else {
+              const startDay = toBucharestDayjs(`${data.date} ${data.start_interval_time}`);
+              if (startDay.isValid()) data.startsAt = startDay.valueOf();
+            }
+          }
+          if (!Number.isFinite(data.endsAt)) {
+            if (Number.isFinite(data.endTimestamp)) {
+              data.endsAt = data.endTimestamp;
+            } else {
+              const endDay = toBucharestDayjs(`${data.date} ${data.final_interval_time}`);
+              if (endDay.isValid()) data.endsAt = endDay.valueOf();
+            }
+          }
+        }
+
         programari.push({ uid: doc.id, ...data });
       }
     });
@@ -345,11 +392,23 @@ const checkForConflicts = async (date, startTime, endTime, machine) => {
       snapshot.docs.map(async (doc) => {
         const programare = doc.data();
 
+        let endsAtMillis = Number.isFinite(programare.endsAt) ? programare.endsAt : null;
+        if (!Number.isFinite(endsAtMillis) && Number.isFinite(programare.endTimestamp)) {
+          endsAtMillis = programare.endTimestamp;
+        }
+        if (!Number.isFinite(endsAtMillis)) {
+          const bDate = formatBucharestDate(programare.date);
+          if (bDate && programare.final_interval_time) {
+            const endCandidate = dayjs.tz(`${bDate} ${programare.final_interval_time}`, "DD/MM/YYYY HH:mm", BUCURESTI_TZ);
+            if (endCandidate.isValid()) endsAtMillis = endCandidate.valueOf();
+          }
+        }
+
         if (
           isDryerMachine(programare.machine) &&
-          programare.active?.status &&
-          typeof programare.endsAt === "number" &&
-          programare.endsAt <= now
+          (programare.active?.status === true || !programare.active) &&
+          Number.isFinite(endsAtMillis) &&
+          endsAtMillis <= now
         ) {
           updates.push(
             doc.ref.update({
@@ -487,6 +546,36 @@ const getAllProgramari = async (req, res) => {
 
     for (const doc of snapshot.docs) {
       const data = doc.data();
+
+      // Normalize active field
+      if (!data.active || typeof data.active !== "object") {
+        data.active = {
+          status: data.active === false ? false : true,
+          message: data.active === false ? "Anulată" : "Activă",
+        };
+      } else if (data.active.status === undefined) {
+        data.active.status = true;
+      }
+
+      // Normalize dryer timestamps
+      if (isDryerMachine(data.machine)) {
+        if (!Number.isFinite(data.startsAt)) {
+          if (Number.isFinite(data.startTimestamp)) {
+            data.startsAt = data.startTimestamp;
+          } else {
+            const startDay = toBucharestDayjs(`${data.date} ${data.start_interval_time}`);
+            if (startDay.isValid()) data.startsAt = startDay.valueOf();
+          }
+        }
+        if (!Number.isFinite(data.endsAt)) {
+          if (Number.isFinite(data.endTimestamp)) {
+            data.endsAt = data.endTimestamp;
+          } else {
+            const endDay = toBucharestDayjs(`${data.date} ${data.final_interval_time}`);
+            if (endDay.isValid()) data.endsAt = endDay.valueOf();
+          }
+        }
+      }
 
       // Filter by date if requested
       if (targetDate) {
@@ -778,11 +867,23 @@ const checkForConflictsExcluding = async (
 
         const programare = doc.data();
 
+        let endsAtMillis = Number.isFinite(programare.endsAt) ? programare.endsAt : null;
+        if (!Number.isFinite(endsAtMillis) && Number.isFinite(programare.endTimestamp)) {
+          endsAtMillis = programare.endTimestamp;
+        }
+        if (!Number.isFinite(endsAtMillis)) {
+          const bDate = formatBucharestDate(programare.date);
+          if (bDate && programare.final_interval_time) {
+            const endCandidate = dayjs.tz(`${bDate} ${programare.final_interval_time}`, "DD/MM/YYYY HH:mm", BUCURESTI_TZ);
+            if (endCandidate.isValid()) endsAtMillis = endCandidate.valueOf();
+          }
+        }
+
         if (
-          isDryerMachine(machine) &&
-          programare.active?.status &&
-          typeof programare.endsAt === "number" &&
-          programare.endsAt <= now
+          isDryerMachine(programare.machine || machine) &&
+          (programare.active?.status === true || !programare.active) &&
+          Number.isFinite(endsAtMillis) &&
+          endsAtMillis <= now
         ) {
           updates.push(
             doc.ref.update({
@@ -1332,16 +1433,15 @@ const getLastDryerBooking = async (req, res) => {
     const requestedMachine = req.query?.machine || req.params?.machine || "Uscator 1";
     const targetMachines = getDryerQueryMachines(requestedMachine);
 
-    // Query for each candidate machine to avoid composite index requirements with 'in' and 'orderBy'
     const docs = [];
     for (const m of targetMachines) {
-      const snap = await getCollection("programari")
-        .where("machine", "==", m)
-        .orderBy("startsAt", "desc")
-        .limit(1)
-        .get();
-      if (!snap.empty) {
-        docs.push(snap.docs[0]);
+      try {
+        const snap = await getCollection("programari")
+          .where("machine", "==", m)
+          .get();
+        snap.forEach((d) => docs.push(d));
+      } catch (err) {
+        console.error("Error querying machine bookings:", m, err);
       }
     }
 
@@ -1349,7 +1449,15 @@ const getLastDryerBooking = async (req, res) => {
       return { code: 200, success: true, booking: null };
     }
 
-    docs.sort((a, b) => (b.data().startsAt || 0) - (a.data().startsAt || 0));
+    const parseBookingTime = (d) => {
+      const data = d.data();
+      if (Number.isFinite(data.startsAt)) return data.startsAt;
+      if (Number.isFinite(data.startTimestamp)) return data.startTimestamp;
+      const day = toBucharestDayjs(`${data.date} ${data.start_interval_time}`);
+      return day.isValid() ? day.valueOf() : (data.createdAt || 0);
+    };
+
+    docs.sort((a, b) => parseBookingTime(b) - parseBookingTime(a));
     const booking = { uid: docs[0].id, ...docs[0].data() };
     return { code: 200, success: true, booking };
   } catch (error) {
