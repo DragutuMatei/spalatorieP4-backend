@@ -1485,7 +1485,20 @@ const getLastDryerBooking = async (req, res) => {
     };
 
     docs.sort((a, b) => parseBookingTime(b) - parseBookingTime(a));
-    const latestDoc = docs[0];
+    const nowMillis = Date.now();
+    const isCompleted = (d) => {
+      const data = d.data();
+      if (data.active && data.active.status === false) return true;
+      const endsAt =
+        data.endsAt ||
+        (Number.isFinite(data.startsAt) && data.duration
+          ? data.startsAt + data.duration * 60000
+          : null);
+      if (endsAt && endsAt <= nowMillis) return true;
+      return false;
+    };
+    const completedDocs = docs.filter(isCompleted);
+    const latestDoc = completedDocs.length > 0 ? completedDocs[0] : docs[0];
     const bookingData = latestDoc.data();
     let bookingUser = bookingData.user || {};
 

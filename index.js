@@ -122,7 +122,7 @@ const cleanExpiredReservations = () => {
       console.log(`[Cleanup] Temp reservation for user ${userId} expired.`);
       deletedTemp++;
       // Notifică toți clienții că rezervarea a expirat
-      io.emit("cancelTempReservation", { userId });
+      io.emit("cancelTempReservation", { userId, expired: true });
     }
   }
 
@@ -136,7 +136,7 @@ const cleanExpiredReservations = () => {
       console.log(`[Cleanup] Dryer selection for user ${userId} expired.`);
       deletedDryer++;
       // Notifică toți clienții că selecția a expirat
-      io.emit("cancelDryerSelection", { userId });
+      io.emit("cancelDryerSelection", { userId, expired: true });
     }
   }
 
@@ -145,10 +145,15 @@ const cleanExpiredReservations = () => {
   }
 };
 
-// Curățarea automată la fiecare 5 secunde pentru feedback rapid și eliberarea automată a uscătoarelor
+let lastTempCleanup = 0;
+// Curățarea automată la fiecare 5 secunde pentru eliberarea automată a uscătoarelor
 setInterval(async () => {
   try {
-    cleanExpiredReservations();
+    const now = Date.now();
+    if (now - lastTempCleanup >= 30 * 1000) {
+      cleanExpiredReservations();
+      lastTempCleanup = now;
+    }
     await deleteExpiredDryerBookings();
   } catch (err) {
     console.error("[Cleanup] Error in periodic cleanup:", err);
@@ -293,13 +298,12 @@ io.on("connection", (socket) => {
 
   // Când cineva anulează o rezervare temporară
   socket.on("cancelTempReservation", (data) => {
-
     if (data.userId) {
       // Șterge rezervarea temporară
       tempReservations.delete(data.userId);
 
       // Notifică toți ceilalți clienți conectați
-      socket.broadcast.emit("cancelTempReservation", data);
+      socket.broadcast.emit("cancelTempReservation", { ...data, expired: false });
     }
   });
 
@@ -325,7 +329,7 @@ io.on("connection", (socket) => {
       dryerLiveSelections.delete(data.userId);
     }
 
-    socket.broadcast.emit("cancelDryerSelection", data);
+    socket.broadcast.emit("cancelDryerSelection", { ...data, expired: false });
   });
 
   // Când utilizatorul se deconectează
@@ -354,12 +358,12 @@ io.on("connection", (socket) => {
       const userId = data.programare.user.uid;
       if (tempReservations.has(userId)) {
         tempReservations.delete(userId);
-        io.emit("cancelTempReservation", { userId });
+        io.emit("cancelTempReservation", { userId, expired: false });
       }
 
       if (dryerLiveSelections.has(userId)) {
         dryerLiveSelections.delete(userId);
-        io.emit("cancelDryerSelection", { userId });
+        io.emit("cancelDryerSelection", { userId, expired: false });
       }
     }
 

@@ -427,7 +427,12 @@ const deleteExpiredDryerBookings = async (scope = "auto") => {
       return { processedCount: 0 };
     }
 
-    const io = getIO();
+    let io = null;
+    try {
+      io = getIO();
+    } catch (e) {
+      // Socket.io not initialized yet or running outside socket context
+    }
     const activeExpired = [];
     const inactiveByMachine = {
       uscator1: [],
@@ -515,7 +520,9 @@ const deleteExpiredDryerBookings = async (scope = "auto") => {
           active: updatedActiveState,
         };
 
-        io.emit("programare", { action: "update", programare: updatedData });
+        if (io) {
+          io.emit("programare", { action: "update", programare: updatedData });
+        }
 
         inactiveByMachine[item.machineKey].push({
           doc: item.doc,
@@ -542,7 +549,9 @@ const deleteExpiredDryerBookings = async (scope = "auto") => {
         for (const item of toDelete) {
           try {
             await item.doc.ref.delete();
-            io.emit("programare", { action: "delete", programareId: item.doc.id });
+            if (io) {
+              io.emit("programare", { action: "delete", programareId: item.doc.id });
+            }
           } catch (err) {
             console.error(`[Cleanup] Error deleting older inactive dryer booking ${item.doc.id}:`, err);
           }
