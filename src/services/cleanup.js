@@ -322,7 +322,35 @@ const deleteProgramariOlderThanThreeDays = async (scope = "auto") => {
 
     const bookingsToDelete = [];
 
+    // Păstrăm ultima rezervare a fiecărui uscător, chiar dacă e veche,
+    // ca să se poată afișa în continuare cine l-a folosit ultimul
+    const latestDryerBookings = {};
     snapshot.forEach((doc) => {
+      const data = doc.data();
+      const machine = (data.machine || "").trim().toLowerCase();
+      if (!machine.startsWith("uscator")) {
+        return;
+      }
+      const dryerKey = machine.includes("2") ? "uscator2" : "uscator1";
+      const start = [data.startsAt, data.startTimestamp, data.createdAt].find(
+        (value) => Number.isFinite(value)
+      );
+      if (
+        Number.isFinite(start) &&
+        (!latestDryerBookings[dryerKey] || start > latestDryerBookings[dryerKey].start)
+      ) {
+        latestDryerBookings[dryerKey] = { id: doc.id, start };
+      }
+    });
+    const protectedIds = new Set(
+      Object.values(latestDryerBookings).map((booking) => booking.id)
+    );
+
+    snapshot.forEach((doc) => {
+      if (protectedIds.has(doc.id)) {
+        return;
+      }
+
       const data = doc.data();
       const bookingDate = parseBookingDate(data.date);
 

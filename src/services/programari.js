@@ -1486,16 +1486,27 @@ const getLastDryerBooking = async (req, res) => {
 
     docs.sort((a, b) => parseBookingTime(b) - parseBookingTime(a));
     const nowMillis = Date.now();
+    // Rezervările mai vechi pot avea doar endTimestamp sau doar data + ora de final
+    const parseBookingEndTime = (d) => {
+      const data = d.data();
+      if (Number.isFinite(data.endsAt)) return data.endsAt;
+      if (Number.isFinite(data.endTimestamp)) return data.endTimestamp;
+      const duration = Number(data.duration || data.durationMinutes);
+      if (Number.isFinite(duration) && duration > 0) {
+        const start = parseBookingTime(d);
+        if (start > 0) return start + duration * 60000;
+      }
+      if (data.date && data.final_interval_time) {
+        const day = dayjs.tz(`${data.date} ${data.final_interval_time}`, "DD/MM/YYYY HH:mm", BUCURESTI_TZ);
+        if (day.isValid()) return day.valueOf();
+      }
+      return null;
+    };
     const isCompleted = (d) => {
       const data = d.data();
       if (data.active && data.active.status === false) return true;
-      const endsAt =
-        data.endsAt ||
-        (Number.isFinite(data.startsAt) && data.duration
-          ? data.startsAt + data.duration * 60000
-          : null);
-      if (endsAt && endsAt <= nowMillis) return true;
-      return false;
+      const endsAt = parseBookingEndTime(d);
+      return Number.isFinite(endsAt) && endsAt <= nowMillis;
     };
     const completedDocs = docs.filter(isCompleted);
     const latestDoc = completedDocs.length > 0 ? completedDocs[0] : docs[0];
