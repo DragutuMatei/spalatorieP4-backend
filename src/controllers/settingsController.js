@@ -1,12 +1,42 @@
-import { getSettings, saveSetting } from "../services/settings.js";
+import {
+  getSettings,
+  saveSetting,
+  MAX_BOOKING_DAYS_AHEAD_LIMIT,
+} from "../services/settings.js";
+import { cancelBookingsBeyondMaxDaysAhead } from "../services/programari.js";
 import { getIO } from "../utils/socket.js";
 
 const saveSettingsController = async (req, res) => {
-  const { key, value } = req.body;
+  const { key } = req.body;
+  let { value } = req.body;
+
+  if (key === "maxBookingDaysAhead") {
+    value = Number(value);
+    if (
+      !Number.isInteger(value) ||
+      value < 0 ||
+      value > MAX_BOOKING_DAYS_AHEAD_LIMIT
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: `Numărul de zile trebuie să fie un număr întreg între 0 și ${MAX_BOOKING_DAYS_AHEAD_LIMIT}.`,
+      });
+    }
+  }
+
   const result = await saveSetting(key, value);
   const code = result.code;
   delete result.code;
   console.log(result);
+  if (code === 200 && key === "maxBookingDaysAhead") {
+    try {
+      result.cancelledBookings = await cancelBookingsBeyondMaxDaysAhead(value);
+    } catch (error) {
+      console.error("Error cancelling bookings beyond max days ahead:", error);
+      result.cancelledBookings = 0;
+      result.cancelError = true;
+    }
+  }
   if (code === 200) {
     // Emit toate setările pentru live update
     console.log("Emitting socket settings update:", result.settings);

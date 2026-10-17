@@ -9,6 +9,7 @@ import {
   sendBookingConfirmationEmail,
   sendDeletedBookingEmail,
 } from "./emailService.js";
+import { getMaxBookingDaysAhead } from "./settings.js";
 
 dayjs.extend(utc);
 dayjs.extend(timezone);
@@ -63,6 +64,27 @@ const toBucharestDayjs = (value) => {
 const formatBucharestDate = (value, formatStr = "DD/MM/YYYY") => {
   const date = toBucharestDayjs(value);
   return date.isValid() ? date.format(formatStr) : "";
+};
+
+// Ultima zi în care se poate programa un user (numărătoarea începe de mâine), ca "YYYY-MM-DD".
+// Calculul se face în UTC pe data calendaristică, ca să nu fie afectat de trecerea la ora de iarnă/vară.
+const getLastBookableDay = (maxDaysAhead) =>
+  dayjs
+    .utc(dayjs().tz(BUCURESTI_TZ).format("YYYY-MM-DD"))
+    .add(maxDaysAhead, "day")
+    .format("YYYY-MM-DD");
+
+const isBeyondLastBookableDay = (date, maxDaysAhead) => {
+  const bookingDay = formatBucharestDate(date, "YYYY-MM-DD");
+  return Boolean(bookingDay) && bookingDay > getLastBookableDay(maxDaysAhead);
+};
+
+// În română, numerele care se termină în 00 sau 20-99 cer "de": "21 de zile"
+const formatDaysRo = (days) => {
+  if (days === 1) return "o zi";
+  const lastTwo = days % 100;
+  const needsDe = days > 0 && (lastTwo === 0 || lastTwo >= 20);
+  return `${days} ${needsDe ? "de " : ""}zile`;
 };
 
 const saveProgramare = async (req, res) => {
@@ -147,6 +169,19 @@ const saveProgramare = async (req, res) => {
         programareData.start_interval_time,
         programareData.final_interval_time
       );
+
+      if (userRole !== "admin") {
+        const maxDaysAhead = await getMaxBookingDaysAhead();
+        if (isBeyondLastBookableDay(programareData.date, maxDaysAhead)) {
+          return {
+            code: 403,
+            success: false,
+            message: `Te poți programa cu cel mult ${formatDaysRo(
+              maxDaysAhead
+            )} în avans.`,
+          };
+        }
+      }
 
       // Verificare limită de 4 intervale (2 ore) pe zi per mașină pentru userii normali
       if (userRole !== "admin" && programareData.user?.uid) {
@@ -1265,6 +1300,45 @@ const cancelProgramareWithReason = async (req, res) => {
   }
 };
 
+// Anulează programările userilor (nu ale adminilor) care depășesc noua limită de zile în avans
+const cancelBookingsBeyondMaxDaysAhead = async (maxDaysAhead) => {
+  const reason = `Perioada în care te poți programa în avans a fost redusă la ${formatDaysRo(
+    maxDaysAhead
+  )}, iar data programării tale nu mai este disponibilă.`;
+
+  const [bookingsSnapshot, adminsSnapshot] = await Promise.all([
+    getCollection("programari").where("active.status", "==", true).get(),
+    getCollection("users").where("role", "==", "admin").get(),
+  ]);
+  const adminUids = new Set(adminsSnapshot.docs.map((doc) => doc.id));
+
+  let cancelledCount = 0;
+  for (const doc of bookingsSnapshot.docs) {
+    const data = doc.data();
+    const userUid = data.user?.uid;
+    if (data.machine === DRYER_MACHINE || !userUid || adminUids.has(userUid)) {
+      continue;
+    }
+
+    if (!isBeyondLastBookableDay(data.date, maxDaysAhead)) {
+      continue;
+    }
+
+    const result = await cancelProgramareWithReason({
+      body: { bookingId: doc.id, reason },
+    });
+    if (result.code === 200) {
+      cancelledCount++;
+      getIO().emit("programare", {
+        action: "update",
+        programare: result.cancelledBooking,
+      });
+    }
+  }
+
+  return cancelledCount;
+};
+
 const runManualCleanup = async (req, res) => {
   const scope = req.body?.scope || "auto";
 
@@ -1326,6 +1400,7 @@ export {
   deleteProgramare,
   deleteProgramareWithReason,
   cancelProgramareWithReason,
+  cancelBookingsBeyondMaxDaysAhead,
   getFilteredBookings,
   runManualCleanup,
   getLastDryerBooking,

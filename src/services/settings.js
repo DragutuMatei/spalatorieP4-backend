@@ -1,5 +1,9 @@
 import { getCollection } from "../utils/collections.js";
 
+// Câte zile în avans (fără ziua curentă) se pot programa userii cu rol "user"
+const DEFAULT_MAX_BOOKING_DAYS_AHEAD = 21;
+const MAX_BOOKING_DAYS_AHEAD_LIMIT = 365;
+
 const saveSetting = async (key, value) => {
   try {
     console.log(`Saving setting: ${key} = ${value}`);
@@ -14,6 +18,10 @@ const saveSetting = async (key, value) => {
 
     if (settingsData.blockPastSlots === undefined) {
       settingsData.blockPastSlots = false;
+    }
+
+    if (settingsData.maxBookingDaysAhead === undefined) {
+      settingsData.maxBookingDaysAhead = DEFAULT_MAX_BOOKING_DAYS_AHEAD;
     }
 
     console.log('Settings after save:', settingsData);
@@ -47,6 +55,7 @@ const getSettings = async () => {
         m2Enabled: true,
         m3Enabled: true,
         blockPastSlots: false,
+        maxBookingDaysAhead: DEFAULT_MAX_BOOKING_DAYS_AHEAD,
       };
       await settingsRef.set(defaultSettings);
       return {
@@ -75,6 +84,12 @@ const getSettings = async () => {
       needsUpdate = true;
     }
 
+    if (settingsData.maxBookingDaysAhead === undefined) {
+      updates.maxBookingDaysAhead = DEFAULT_MAX_BOOKING_DAYS_AHEAD;
+      settingsData.maxBookingDaysAhead = DEFAULT_MAX_BOOKING_DAYS_AHEAD;
+      needsUpdate = true;
+    }
+
     if (needsUpdate) {
       await settingsRef.set(updates, { merge: true });
     }
@@ -96,4 +111,23 @@ const getSettings = async () => {
   }
 };
 
-export { saveSetting, getSettings };
+const getMaxBookingDaysAhead = async () => {
+  try {
+    const settingsDoc = await getCollection("settings").doc("availability").get();
+    const value = settingsDoc.exists
+      ? settingsDoc.data()?.maxBookingDaysAhead
+      : undefined;
+    return Number.isInteger(value) ? value : DEFAULT_MAX_BOOKING_DAYS_AHEAD;
+  } catch (error) {
+    console.error("Error reading maxBookingDaysAhead:", error);
+    return DEFAULT_MAX_BOOKING_DAYS_AHEAD;
+  }
+};
+
+export {
+  saveSetting,
+  getSettings,
+  getMaxBookingDaysAhead,
+  DEFAULT_MAX_BOOKING_DAYS_AHEAD,
+  MAX_BOOKING_DAYS_AHEAD_LIMIT,
+};
